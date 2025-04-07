@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database service
+  postgres:
+    image: postgres:14-alpine
+    container_name: lnd-ws-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: lnd_wallet_segregation
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lnd-ws-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/lnd_wallet_segregation?schema=public
+      - PORT=3000
+      # The LND credentials should be set in a .env file or passed directly to docker-compose
+      - LND_REST_HOST=${LND_REST_HOST:-localhost:8080}
+      - LND_MACAROON_PATH=${LND_MACAROON_PATH:-}
+      - LND_TLS_CERT_PATH=${LND_TLS_CERT_PATH:-}
+      - USER_IDENTIFIER_PATTERN=${USER_IDENTIFIER_PATTERN:-}
+    volumes:
+      - ./prisma:/app/prisma
+    restart: on-failure
+    # First initialize the database, then start the application
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        sleep 3 &&
+        echo 'Creating database schema...' &&
+        npx prisma db push --accept-data-loss &&
+        echo 'Starting application...' &&
+        npm start
+      "
+
+volumes:
+  postgres_data: 

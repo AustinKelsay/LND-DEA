@@ -1,0 +1,20 @@
+# Migration metadata file
+# Database: postgresql
+# Applied steps:
+#   - CreateEnum
+#   - CreateEnum
+#   - CreateTable
+#   - CreateTable
+#   - CreateTable
+#   - CreateTable
+#   - CreateIndex
+#   - CreateIndex
+#   - CreateIndex
+#   - CreateIndex
+#   - AddForeignKey
+#   - AddForeignKey
+#   - AddForeignKey
+#   - AddForeignKey
+
+migration_version = "20240623000000_initial_schema"
+applied_steps_count = 14 

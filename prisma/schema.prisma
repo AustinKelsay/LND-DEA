@@ -1,0 +1,48 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id          String                @id @default(uuid())
+  name        String                @unique
+  description String?
+  transactions LightningTransaction[]
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@map("accounts")
+}
+
+enum TransactionType {
+  INCOMING
+  OUTGOING
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETE
+  FAILED
+}
+
+model LightningTransaction {
+  id        String            @id @default(uuid())
+  accountId String
+  account   Account           @relation(fields: [accountId], references: [id])
+  rHash     String            @unique
+  amount    String            // Using String to represent satoshi values
+  type      TransactionType
+  status    TransactionStatus
+  memo      String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@map("lightning_transactions")
+} 
