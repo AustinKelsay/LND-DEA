@@ -10,6 +10,7 @@ The system uses a custom error handling approach that:
 2. Centralizes error handling in Express middleware
 3. Provides consistent error responses to clients
 4. Categorizes errors properly for debugging
+5. Handles LND API errors with specific status codes and details
 
 ## Custom Error Types
 
@@ -17,7 +18,7 @@ The system extends JavaScript's built-in `Error` class with the following custom
 
 - `AppError`: Base class for all application errors
 - `InvoiceError`: For invoice-related errors
-- `LndApiError`: For LND API-related errors
+- `LndApiError`: For LND API-related errors, including status code and response data
 - `Bolt11ParseError`: For Bolt11 invoice parsing errors
 - `DatabaseError`: For database-related errors
 - `ValidationError`: For request validation errors
@@ -64,6 +65,29 @@ Special helper functions are available to handle specific error sources:
 - `handleLndApiError`: For converting LND API errors
 - `handleDatabaseError`: For converting database errors
 
+## LND API Error Handling
+
+The system includes specific handling for LND API errors:
+
+```typescript
+export class LndApiError extends Error {
+  statusCode: number;
+  responseData?: string;
+
+  constructor(message: string, statusCode: number, responseData?: string) {
+    super(message);
+    this.name = 'LndApiError';
+    this.statusCode = statusCode;
+    this.responseData = responseData;
+  }
+}
+```
+
+This specialized error class captures:
+- The HTTP status code from the LND API
+- The raw response data for debugging
+- A descriptive error message
+
 ## Usage Examples
 
 ### Throwing a validation error
@@ -78,6 +102,22 @@ if (!username) {
 const user = await dbService.getUserById(id);
 if (!user) {
   throw new NotFoundError(`User with ID ${id} not found`);
+}
+```
+
+### Handling LND API errors
+```typescript
+try {
+  await lndService.makeRequest('GET', 'getinfo');
+} catch (error) {
+  if (error instanceof LndApiError) {
+    console.error(`LND API error: ${error.statusCode} - ${error.message}`);
+    // Handle specific error codes
+    if (error.statusCode === 401) {
+      // Handle authentication error
+    }
+  }
+  throw error;
 }
 ```
 

@@ -27,6 +27,7 @@ This project deliberately keeps a minimal footprint:
 - **API Key Authentication**: Simple but effective API key authentication
 - **Docker Ready**: Easy deployment with Docker Compose
 - **Comprehensive Logging**: Structured logging for easy debugging and monitoring
+- **LND Connectivity Testing**: Endpoint to verify LND node connection status
 
 ## Database Schema
 
@@ -75,6 +76,12 @@ The system uses a focused PostgreSQL database with only two tables:
 | GET | `/api/transactions` | Get all transactions |
 | GET | `/api/transactions/:rHash` | Get transaction by rHash |
 | PUT | `/api/transactions/:rHash/status` | Update transaction status |
+
+### LND Info
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/lnd/info` | Get LND node connection information |
 
 ### Pagination
 
@@ -175,6 +182,29 @@ Response:
 }
 ```
 
+### Check LND node status
+```
+GET /api/lnd/info
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "version": "0.18.0-beta",
+    "identity_pubkey": "0369bbfcb51806cab960301489c37e98e74a38f83a874d0ce0e57f5d8cc9052394",
+    "alias": "plebdevs-test",
+    "color": "#ff5000",
+    "num_active_channels": 3,
+    "synced_to_chain": true,
+    "block_height": 2004941,
+    "chains": [{"chain": "bitcoin", "network": "signet"}],
+    "features": {...}
+  }
+}
+```
+
 ## Docker Setup
 
 ### Running with Docker Compose
@@ -182,34 +212,44 @@ Response:
 The application can be easily run using Docker Compose, which will set up both the application and the PostgreSQL database:
 
 ```bash
-# Run the setup script
-npm run docker:setup
+# Build and start Docker containers
+docker-compose build
+docker-compose up -d
 ```
 
 This will:
-1. Check for Docker and Docker Compose installation
-2. Create a `.env` file if it doesn't exist
-3. Ask if you want to start fresh (remove existing containers and data)
-4. Build and start the containers
-5. Wait for the application to be ready
+1. Build the Docker image
+2. Start the PostgreSQL and application containers
+3. Initialize the database schema
+4. Start the application
 
 Once running, you can access the application at http://localhost:3000.
 
-### Docker Environment Configuration
+### Environment Configuration
 
-Make sure to configure these environment variables in `.env.docker`:
+The application uses a single `.env` file for configuration. When running with Docker, the database connection is automatically configured to use the Docker service name.
+
+Example `.env` file:
 
 ```
-# Database connection for Docker
-DATABASE_URL="postgresql://postgres:password@postgres:5432/lnd_wallet_segregation?schema=public"
+# Database connection - for local development
+# Docker overrides this to use the postgres service
+DATABASE_URL="postgresql://postgres:password@localhost:5433/lnd_wallet_segregation?schema=public"
 
 # LND connection
-LND_REST_HOST="your-lnd-node-ip:8080"
+LND_REST_HOST="your-lnd-node:8080"
 LND_MACAROON_PATH="your-macaroon-hex-string"
 LND_TLS_CERT_PATH="your-certificate-base64-string"
 
+# Optional: User identification pattern
+USER_IDENTIFIER_PATTERN="userid:([a-zA-Z0-9]+)"
+
 # API authentication (optional but recommended)
 API_KEY="your-secure-api-key"
+
+# Server
+PORT=3000
+NODE_ENV=development
 ```
 
 ## Installation for Development
@@ -295,25 +335,15 @@ lnd.subscribeInvoices().on('invoice_paid', async (invoice) => {
 });
 ```
 
-### Example Client
+### Testing LND Connectivity
 
-This repository includes an example client that demonstrates how to interact with the API. To run it:
+To verify your connection to the LND node is working:
 
 ```bash
-# Install dependencies
-npm install
-
-# Run the example client
-npm run example:client
+curl http://localhost:3000/api/lnd/info
 ```
 
-The example client (`examples/client.js`) shows how to:
-- Authenticate with the API
-- Create an account
-- Record a transaction
-- Check an account balance
-
-You can use this as a starting point for your own integration.
+This will return information about your node if the connection is successful, or an error if there are issues with the connection.
 
 ## License
 

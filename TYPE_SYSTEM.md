@@ -11,6 +11,7 @@ The project uses TypeScript to provide strong type safety throughout the codebas
 3. Database models via Prisma
 4. Application-specific interfaces
 5. Error types
+6. Node.js built-in modules and Buffer
 
 ## Type Definitions
 
@@ -24,6 +25,7 @@ The `src/types/lnd-api.d.ts` file contains TypeScript interfaces for LND API res
 - `LndPaymentResponse`: Structure of payment responses
 - `LndPaymentStatus`: Enum of payment statuses
 - `LndErrorResponse`: Structure of error responses
+- `LndInfo`: Structure of LND node information
 
 These types ensure we correctly parse and handle responses from the LND API.
 
@@ -55,6 +57,14 @@ The `src/types/global.d.ts` file extends TypeScript's understanding of the Node.
 
 - `ProcessEnv`: Defines all environment variables used in the app
 - `ErrorConstructor`: Extends the Error constructor with Node.js specific methods
+- `Buffer`: Complete definition of the Node.js Buffer class
+- `Module declarations`: For Node.js modules like 'fs', 'http', 'https', and '@prisma/client'
+
+### HTTP Types
+
+We use the built-in `http` module to properly type HTTP responses:
+
+- `IncomingMessage`: Used to type HTTP responses in the LND service
 
 ## Benefits
 
@@ -91,6 +101,21 @@ const parsedInvoice: ParsedInvoice = parseInvoice(paymentRequest);
 // Create a user with type checking
 const user = await dbService.createUser({ 
   username: "example" // TypeScript ensures this matches CreateUserInput
+});
+```
+
+### HTTP Request Handling with Types
+
+```typescript
+// Properly typed HTTP response
+const req = https.request(options, (res: IncomingMessage) => {
+  let data = '';
+  
+  res.on('data', (chunk: Buffer) => {
+    data += chunk;
+  });
+
+  // Rest of the code...
 });
 ```
 
