@@ -20,19 +20,14 @@ This project deliberately keeps a minimal footprint:
 
 ## Technical Features
 
-- **TypeScript with Strong Typing**: Full type safety with comprehensive type declarations ([See Type System Documentation](./TYPE_SYSTEM.md))
-- **Robust Error Handling**: Structured error classes with appropriate HTTP status codes ([See Error Handling Documentation](./ERROR_HANDLING.md))
+- **TypeScript with Strong Typing**: Full type safety with comprehensive type declarations
+- **Robust Error Handling**: Structured error classes with appropriate HTTP status codes
 - **Automatic Transaction Detection**: Automatically monitors LND for new invoices and payments
 - **Pagination Support**: All list endpoints include pagination for handling large datasets
 - **API Key Authentication**: Simple but effective API key authentication
 - **Docker Ready**: Easy deployment with Docker Compose
 - **Comprehensive Logging**: Structured logging for easy debugging and monitoring
 - **LND Connectivity Testing**: Endpoint to verify LND node connection status
-
-## Additional Documentation
-
-- [Type System Documentation](./TYPE_SYSTEM.md) - Details on the TypeScript type system used throughout the project
-- [Error Handling Documentation](./ERROR_HANDLING.md) - Comprehensive guide to the error handling system
 
 ## Database Schema
 
@@ -59,6 +54,258 @@ The system uses a focused PostgreSQL database with only two tables:
 - createdAt (timestamp)
 - updatedAt (timestamp)
 ```
+
+## Type System
+
+The project uses TypeScript to provide strong type safety throughout the codebase. Custom type definitions have been created for:
+
+1. LND API responses and requests
+2. Bolt11 invoice structures using light-bolt11-decoder
+3. Database models via Prisma
+4. Application-specific interfaces
+5. Error types
+6. Node.js built-in modules and Buffer
+
+### Type Definitions
+
+#### LND API Types
+
+The `src/types/lnd-api.d.ts` file contains TypeScript interfaces for LND API responses, including:
+
+- `LndInvoice`: Structure of invoice objects from LND
+- `LndRouteHint`: Structure of route hints for invoices
+- `LndInvoiceState`: Enum of possible invoice states (OPEN, SETTLED, etc.)
+- `LndPaymentResponse`: Structure of payment responses
+- `LndPaymentStatus`: Enum of payment statuses
+- `LndErrorResponse`: Structure of error responses
+- `LndInfo`: Structure of LND node information
+
+These types ensure we correctly parse and handle responses from the LND API.
+
+#### Bolt11 Types
+
+The `src/types/light-bolt11-decoder.d.ts` file contains type definitions for the light-bolt11-decoder library:
+
+- `DecodedInvoice`: The structure of a decoded invoice
+- `DecodedSection`: Individual sections within a decoded invoice
+- `RouteHint`: Type for routing hints
+- `FeatureBits`: Types for feature bits in invoices
+
+These types ensure we correctly extract data from Bolt11 invoices.
+
+#### Application Interfaces
+
+The `src/models/interfaces.ts` file contains interfaces used throughout the application:
+
+- `ParsedInvoice`: Our application's standardized invoice structure
+- `CreateUserInput`: Input for creating users
+- `CreateAccountInput`: Input for creating accounts
+- `CreateTransactionInput`: Input for creating transactions
+- `UserAccountSummary`: Output for account summaries
+- `TransactionSummary`: Output for transaction summaries
+
+#### Node.js Environment Types
+
+The `src/types/global.d.ts` file extends TypeScript's understanding of the Node.js environment:
+
+- `ProcessEnv`: Defines all environment variables used in the app
+- `ErrorConstructor`: Extends the Error constructor with Node.js specific methods
+- `Buffer`: Complete definition of the Node.js Buffer class
+- `Module declarations`: For Node.js modules like 'fs', 'http', 'https', and '@prisma/client'
+
+#### HTTP Types
+
+We use the built-in `http` module to properly type HTTP responses:
+
+- `IncomingMessage`: Used to type HTTP responses in the LND service
+
+### Benefits of Type System
+
+1. **Type Safety**: Catches errors at compile time instead of runtime
+2. **IDE Support**: Provides autocomplete and documentation in editors
+3. **Self-Documentation**: Makes the codebase more readable and self-documenting
+4. **Consistent Structures**: Ensures data structures are consistent across the app
+5. **Refactoring Safety**: Makes refactoring safer and easier
+
+### Type System Usage Examples
+
+#### Using Type Definitions for LND API
+
+```typescript
+// LND invoice is properly typed
+async function processInvoice(invoice: LndInvoice) {
+  // TypeScript knows all the properties of LndInvoice
+  if (invoice.settled) {
+    // Process settled invoice
+  }
+}
+```
+
+#### Using Parse Function with Strong Types
+
+```typescript
+// Parse a Bolt11 invoice with strong typing
+const parsedInvoice: ParsedInvoice = parseInvoice(paymentRequest);
+```
+
+#### Using Type-Safe Database Operations
+
+```typescript
+// Create a user with type checking
+const user = await dbService.createUser({ 
+  username: "example" // TypeScript ensures this matches CreateUserInput
+});
+```
+
+#### HTTP Request Handling with Types
+
+```typescript
+// Properly typed HTTP response
+const req = https.request(options, (res: IncomingMessage) => {
+  let data = '';
+  
+  res.on('data', (chunk: Buffer) => {
+    data += chunk;
+  });
+
+  // Rest of the code...
+});
+```
+
+## Error Handling System
+
+The system uses a custom error handling approach that:
+
+1. Creates specific error types for different scenarios
+2. Centralizes error handling in Express middleware
+3. Provides consistent error responses to clients
+4. Categorizes errors properly for debugging
+5. Handles LND API errors with specific status codes and details
+
+### Custom Error Types
+
+The system extends JavaScript's built-in `Error` class with the following custom error types:
+
+- `AppError`: Base class for all application errors
+- `InvoiceError`: For invoice-related errors
+- `LndApiError`: For LND API-related errors, including status code and response data
+- `Bolt11ParseError`: For Bolt11 invoice parsing errors
+- `DatabaseError`: For database-related errors
+- `ValidationError`: For request validation errors
+- `AuthenticationError`: For authentication-related errors
+- `AuthorizationError`: For authorization-related errors
+- `NotFoundError`: For resource not found errors
+
+### Error Response Format
+
+All errors return a consistent JSON response with the following structure:
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Error message",
+    "status": 400,
+    "code": "ERROR_CODE",
+    "details": {}
+  }
+}
+```
+
+Fields:
+- `message`: Human-readable error message
+- `status`: HTTP status code
+- `code`: Machine-readable error code
+- `details`: Additional error details (only included in certain error types)
+
+### Error Middleware
+
+The error handling middleware:
+
+1. Captures all errors thrown in the application
+2. Formats them into consistent response objects
+3. Sets the appropriate HTTP status code
+4. Adds details based on the error type
+5. Logs errors in development mode
+
+### Error Handlers
+
+Special helper functions are available to handle specific error sources:
+
+- `handleLndApiError`: For converting LND API errors
+- `handleDatabaseError`: For converting database errors
+
+### LND API Error Handling
+
+The system includes specific handling for LND API errors:
+
+```typescript
+export class LndApiError extends Error {
+  statusCode: number;
+  responseData?: string;
+
+  constructor(message: string, statusCode: number, responseData?: string) {
+    super(message);
+    this.name = 'LndApiError';
+    this.statusCode = statusCode;
+    this.responseData = responseData;
+  }
+}
+```
+
+This specialized error class captures:
+- The HTTP status code from the LND API
+- The raw response data for debugging
+- A descriptive error message
+
+### Error Handling Usage Examples
+
+#### Throwing a validation error
+```typescript
+if (!username) {
+  throw new ValidationError('Username is required', { username: 'Username is required' });
+}
+```
+
+#### Throwing a not found error
+```typescript
+const user = await dbService.getUserById(id);
+if (!user) {
+  throw new NotFoundError(`User with ID ${id} not found`);
+}
+```
+
+#### Handling LND API errors
+```typescript
+try {
+  await lndService.makeRequest('GET', 'getinfo');
+} catch (error) {
+  if (error instanceof LndApiError) {
+    console.error(`LND API error: ${error.statusCode} - ${error.message}`);
+    // Handle specific error codes
+    if (error.statusCode === 401) {
+      // Handle authentication error
+    }
+  }
+  throw error;
+}
+```
+
+#### Using async handler
+```typescript
+const getUser = asyncHandler(async (req, res) => {
+  // This code is automatically wrapped in try/catch
+  const user = await userService.getUser(req.params.id);
+  res.json(user);
+});
+```
+
+### Error Logging
+
+In development mode, all errors are logged to the console with their stack traces.
+In production mode, only non-operational errors (those not created by our error classes) are logged.
+
+This helps filter out expected errors (like validation errors) while still capturing unexpected issues.
 
 ## API Endpoints
 
