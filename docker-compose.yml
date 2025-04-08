@@ -4,13 +4,13 @@ services:
   # PostgreSQL database service
   postgres:
     image: postgres:14-alpine
-    container_name: lnd-ws-postgres
+    container_name: lnd-dea-postgres
     ports:
       - "5433:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: lnd_wallet_segregation
+      POSTGRES_DB: lnd_double_entry_accounting
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +24,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: lnd-ws-app
+    container_name: lnd-dea-app
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,7 +32,7 @@ services:
       - "3000:3000"
     environment:
       # Use postgres as hostname since we're in Docker
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/lnd_wallet_segregation?schema=public
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/lnd_double_entry_accounting?schema=public
       # Load all other environment variables from .env
       - NODE_ENV=${NODE_ENV}
       - PORT=${PORT}

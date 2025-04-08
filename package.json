@@ -1,7 +1,7 @@
 {
-  "name": "lnd-ws",
+  "name": "lnd-dea",
   "version": "1.0.0",
-  "description": "Lightning Network Daemon Wallet Segregation - A lightweight solution for segregating funds in a unified LND node",
+  "description": "Lightning Network Daemon Double Entry Accounting - A lightweight solution for managing double-entry accounting in a unified LND node",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -24,8 +24,8 @@
   "keywords": [
     "lightning",
     "lnd",
-    "wallet",
-    "segregation"
+    "accounting",
+    "double-entry"
   ],
   "author": "",
   "license": "MIT",

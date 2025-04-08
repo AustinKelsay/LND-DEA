@@ -1,6 +1,6 @@
-# LND Wallet Segregation (LND-WS)
+# LND Double Entry Accounting (LND-DEA)
 
-A lightweight solution for segregating funds in a unified Lightning Network Daemon (LND) node. This project allows you to track and manage multiple "virtual wallets" within a single LND instance.
+A lightweight solution for managing double-entry accounting in a unified Lightning Network Daemon (LND) node. This project allows you to track and manage financial transactions with proper accounting principles within a single LND instance.
 
 ## Problem Statement
 
@@ -9,13 +9,13 @@ Lightning Network nodes typically manage funds as a single wallet, making it dif
 - Keep accounting records for separate business units
 - Provide isolated balances for different services sharing a node
 
-This project solves this by providing a minimal database that maps transactions to specific accounts/users while keeping your LND node as the single source of truth for actual transactions.
+This project solves this by providing a minimal double-entry accounting database that maps transactions to specific accounts/users while keeping your LND node as the single source of truth for actual transactions.
 
 ## Project Scope
 
 This project deliberately keeps a minimal footprint:
 - It doesn't duplicate all data from your LND node
-- It simply maps transactions to accounts
+- It implements proper double-entry accounting for LND transactions
 - It provides a simple API to query transactions by account
 
 ## Technical Features
@@ -28,32 +28,6 @@ This project deliberately keeps a minimal footprint:
 - **Docker Ready**: Easy deployment with Docker Compose
 - **Comprehensive Logging**: Structured logging for easy debugging and monitoring
 - **LND Connectivity Testing**: Endpoint to verify LND node connection status
-
-## Database Schema
-
-The system uses a focused PostgreSQL database with only two tables:
-
-### Account
-```
-- id (uuid)
-- name (string, unique)
-- description (string, optional)
-- createdAt (timestamp)
-- updatedAt (timestamp)
-```
-
-### LightningTransaction
-```
-- id (uuid)
-- accountId (foreign key to Account)
-- rHash (string) - payment hash from LND
-- amount (string) - satoshi amount as string to handle large values
-- type (enum: 'INCOMING'|'OUTGOING')
-- status (enum: 'PENDING'|'COMPLETE'|'FAILED')
-- memo (string, optional)
-- createdAt (timestamp)
-- updatedAt (timestamp)
-```
 
 ## Type System
 
@@ -307,6 +281,32 @@ In production mode, only non-operational errors (those not created by our error 
 
 This helps filter out expected errors (like validation errors) while still capturing unexpected issues.
 
+## Database Schema
+
+The system uses a focused PostgreSQL database with only two tables:
+
+### Account
+```
+- id (uuid)
+- name (string, unique)
+- description (string, optional)
+- createdAt (timestamp)
+- updatedAt (timestamp)
+```
+
+### LightningTransaction
+```
+- id (uuid)
+- accountId (foreign key to Account)
+- rHash (string) - payment hash from LND
+- amount (string) - satoshi amount as string to handle large values
+- type (enum: 'INCOMING'|'OUTGOING')
+- status (enum: 'PENDING'|'COMPLETE'|'FAILED')
+- memo (string, optional)
+- createdAt (timestamp)
+- updatedAt (timestamp)
+```
+
 ## API Endpoints
 
 ### Accounts
@@ -486,7 +486,7 @@ Example `.env` file:
 ```
 # Database connection - for local development
 # Docker overrides this to use the postgres service
-DATABASE_URL="postgresql://postgres:password@localhost:5433/lnd_wallet_segregation?schema=public"
+DATABASE_URL="postgresql://postgres:password@localhost:5433/lnd_double_entry_accounting?schema=public"
 
 # LND connection
 LND_REST_HOST="your-lnd-node:8080"
@@ -514,8 +514,8 @@ NODE_ENV=development
 ### Setup
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/lnd-wallet-segregation.git
-cd lnd-wallet-segregation
+git clone https://github.com/yourusername/lnd-double-entry-accounting.git
+cd lnd-double-entry-accounting
 
 # Install dependencies
 npm install
@@ -554,7 +554,7 @@ If no API_KEY is set in the environment, authentication will be disabled with a 
 
 ### Integrating with Your Application
 
-To integrate this wallet segregation system with your LND-based application:
+To integrate this double-entry accounting system with your LND-based application:
 
 1. **Listen for LND Payments**: Use LND's gRPC or REST API to subscribe to payment events
 2. **Determine Account Ownership**: Use your application logic to determine which account a payment belongs to
@@ -568,7 +568,7 @@ lnd.subscribeInvoices().on('invoice_paid', async (invoice) => {
   // e.g., from custom fields in the invoice memo
   const accountId = determineAccountFromInvoice(invoice);
   
-  // Record the transaction in our wallet segregation system
+  // Record the transaction in our double-entry accounting system
   await fetch('http://localhost:3000/api/transactions', {
     method: 'POST',
     headers: { 
