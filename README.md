@@ -20,14 +20,19 @@ This project deliberately keeps a minimal footprint:
 
 ## Technical Features
 
-- **TypeScript with Strong Typing**: Full type safety with comprehensive type declarations
-- **Robust Error Handling**: Structured error classes with appropriate HTTP status codes
+- **TypeScript with Strong Typing**: Full type safety with comprehensive type declarations ([See Type System Documentation](./TYPE_SYSTEM.md))
+- **Robust Error Handling**: Structured error classes with appropriate HTTP status codes ([See Error Handling Documentation](./ERROR_HANDLING.md))
 - **Automatic Transaction Detection**: Automatically monitors LND for new invoices and payments
 - **Pagination Support**: All list endpoints include pagination for handling large datasets
 - **API Key Authentication**: Simple but effective API key authentication
 - **Docker Ready**: Easy deployment with Docker Compose
 - **Comprehensive Logging**: Structured logging for easy debugging and monitoring
 - **LND Connectivity Testing**: Endpoint to verify LND node connection status
+
+## Additional Documentation
+
+- [Type System Documentation](./TYPE_SYSTEM.md) - Details on the TypeScript type system used throughout the project
+- [Error Handling Documentation](./ERROR_HANDLING.md) - Comprehensive guide to the error handling system
 
 ## Database Schema
 
