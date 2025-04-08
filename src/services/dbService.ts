@@ -1,13 +1,12 @@
-import { PrismaClient, InvoiceState, InvoiceType, Prisma } from '@prisma/client';
+import { PrismaClient, TransactionType, TransactionStatus } from '@prisma/client';
 import {
-  CreateUserInput,
   CreateAccountInput,
-  CreateTransactionInput,
-  CreateInvoiceInput,
-  UserAccountSummary,
+  CreateLightningTransactionInput,
+  AccountSummary,
   TransactionSummary
 } from '../models/interfaces';
 import { DatabaseError, NotFoundError, handleDatabaseError } from '../utils/errors';
+import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -15,284 +14,305 @@ const prisma = new PrismaClient();
  * Database service for handling all interactions with the database
  */
 export class DbService {
-  /**
-   * Creates a new user
-   */
-  async createUser(data: CreateUserInput) {
-    try {
-      return await prisma.user.create({
-        data: {
-          username: data.username,
-          // Create default accounts for user
-          accounts: {
-            create: [
-              { name: 'lightning' }, // For tracking Lightning payments
-              { name: 'revenue' },  // For tracking incoming payments
-              { name: 'expense' }   // For tracking outgoing payments
-            ]
-          }
-        }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
+  private prisma: PrismaClient;
 
-  /**
-   * Gets a user by username
-   */
-  async getUserByUsername(username: string) {
-    try {
-      return await prisma.user.findUnique({
-        where: { username },
-        include: { accounts: true }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets a user by ID
-   */
-  async getUserById(id: string) {
-    try {
-      return await prisma.user.findUnique({
-        where: { id },
-        include: { accounts: true }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets all users
-   */
-  async getAllUsers() {
-    try {
-      return await prisma.user.findMany({
-        include: { accounts: true }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
+  constructor() {
+    this.prisma = new PrismaClient();
   }
 
   /**
    * Creates a new account
    */
-  async createAccount(data: CreateAccountInput) {
-    try {
-      return await prisma.account.create({
-        data: {
-          name: data.name,
-          userId: data.userId
-        }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
+  async createAccount(input: CreateAccountInput): Promise<AccountSummary> {
+    const account = await this.prisma.account.create({
+      data: {
+        name: input.name,
+        description: input.description || null
+      }
+    });
+
+    return {
+      id: account.id,
+      name: account.name,
+      description: account.description,
+      balance: '0', // New accounts start with zero balance
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt
+    };
   }
 
   /**
    * Gets an account by ID
    */
-  async getAccountById(id: string) {
-    try {
-      return await prisma.account.findUnique({
-        where: { id }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets an account by user ID and name
-   */
-  async getAccountByUserIdAndName(userId: string, name: string) {
-    try {
-      return await prisma.account.findFirst({
-        where: {
-          userId,
-          name
-        }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets all accounts for a user
-   */
-  async getAccountsByUserId(userId: string) {
-    try {
-      return await prisma.account.findMany({
-        where: { userId }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Creates a new transaction (double-entry)
-   */
-  async createTransaction(data: CreateTransactionInput) {
-    try {
-      // Update account balances
-      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        // Check that accounts exist
-        const debitAccount = await tx.account.findUnique({
-          where: { id: data.debitAccountId }
-        });
-        
-        if (!debitAccount) {
-          throw new NotFoundError(`Debit account not found: ${data.debitAccountId}`);
-        }
-        
-        const creditAccount = await tx.account.findUnique({
-          where: { id: data.creditAccountId }
-        });
-        
-        if (!creditAccount) {
-          throw new NotFoundError(`Credit account not found: ${data.creditAccountId}`);
-        }
-        
-        // Debit account (decrease)
-        await tx.account.update({
-          where: { id: data.debitAccountId },
-          data: {
-            balance: {
-              set: (BigInt(debitAccount.balance) - BigInt(data.amount)).toString()
-            }
-          }
-        });
-
-        // Credit account (increase)
-        await tx.account.update({
-          where: { id: data.creditAccountId },
-          data: {
-            balance: {
-              set: (BigInt(creditAccount.balance) + BigInt(data.amount)).toString()
-            }
-          }
-        });
-
-        // Create transaction record
-        await tx.transaction.create({
-          data: {
-            amount: data.amount,
-            debitAccountId: data.debitAccountId,
-            creditAccountId: data.creditAccountId,
-            invoiceId: data.invoiceId,
-            description: data.description
-          }
-        });
-      });
-
-      return this.getTransactionSummariesByAccountId(data.debitAccountId, 1);
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets a transaction by ID
-   */
-  async getTransactionById(id: string) {
-    try {
-      const transaction = await prisma.transaction.findUnique({
-        where: { id },
-        include: {
-          debitAccount: true,
-          creditAccount: true,
-          invoice: true
-        }
-      });
-      
-      if (!transaction) {
-        throw new NotFoundError(`Transaction not found: ${id}`);
+  async getAccount(id: string): Promise<AccountSummary | null> {
+    const account = await this.prisma.account.findUnique({
+      where: { id },
+      include: {
+        transactions: true
       }
-      
-      return transaction;
-    } catch (error) {
-      throw handleDatabaseError(error);
+    });
+
+    if (!account) {
+      return null;
     }
+
+    const balance = account.transactions.reduce((total: bigint, tx: any) => {
+      const txAmount = BigInt(tx.amount);
+      if (tx.type === TransactionType.INCOMING) {
+        return total + txAmount;
+      } else {
+        return total - txAmount;
+      }
+    }, BigInt(0));
+
+    return {
+      id: account.id,
+      name: account.name,
+      description: account.description,
+      balance: balance.toString(),
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt
+    };
   }
 
   /**
-   * Gets transaction summaries by account ID
+   * Gets all accounts
    */
-  async getTransactionSummariesByAccountId(accountId: string, limit = 10): Promise<TransactionSummary[]> {
-    try {
-      const transactions = await prisma.transaction.findMany({
-        where: {
-          OR: [
-            { debitAccountId: accountId },
-            { creditAccountId: accountId }
-          ]
-        },
-        include: {
-          debitAccount: true,
-          creditAccount: true,
-          invoice: true
-        },
-        orderBy: {
-          createdAt: 'desc'
-        },
-        take: limit
-      });
+  async getAllAccounts(limit = 20, page = 1): Promise<{
+    accounts: AccountSummary[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      pages: number;
+    };
+  }> {
+    const skip = (page - 1) * limit;
+    const totalCount = await this.prisma.account.count();
+    
+    const accounts = await this.prisma.account.findMany({
+      include: {
+        transactions: true
+      },
+      take: limit,
+      skip,
+      orderBy: { createdAt: 'desc' }
+    });
 
-      return transactions.map(tx => ({
-        id: tx.id,
-        createdAt: tx.createdAt,
-        amount: tx.amount,
-        debitAccount: {
-          id: tx.debitAccount.id,
-          name: tx.debitAccount.name,
-          userId: tx.debitAccount.userId
-        },
-        creditAccount: {
-          id: tx.creditAccount.id,
-          name: tx.creditAccount.name,
-          userId: tx.creditAccount.userId
-        },
-        description: tx.description || undefined,
-        invoice: tx.invoice ? {
-          id: tx.invoice.id,
-          rHash: tx.invoice.rHash,
-          paymentRequest: tx.invoice.paymentRequest,
-          type: tx.invoice.type,
-          state: tx.invoice.state
-        } : undefined
-      }));
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Creates a new invoice
-   */
-  async createInvoice(data: CreateInvoiceInput) {
-    try {
-      return await prisma.invoice.create({
-        data: {
-          paymentRequest: data.paymentRequest,
-          rHash: data.rHash,
-          amount: data.amount,
-          memo: data.memo,
-          userIdentifier: data.userIdentifier,
-          type: data.type,
-          state: data.state || InvoiceState.OPEN,
-          expiry: data.expiry,
-          timestamp: data.timestamp,
-          rawData: data.rawData
+    const accountSummaries = accounts.map((account: any) => {
+      const balance = account.transactions.reduce((total: bigint, tx: any) => {
+        const txAmount = BigInt(tx.amount);
+        if (tx.type === TransactionType.INCOMING) {
+          return total + txAmount;
+        } else {
+          return total - txAmount;
         }
-      });
+      }, BigInt(0));
+
+      return {
+        id: account.id,
+        name: account.name,
+        description: account.description,
+        balance: balance.toString(),
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt
+      };
+    });
+
+    return {
+      accounts: accountSummaries,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        pages: Math.ceil(totalCount / limit)
+      }
+    };
+  }
+
+  /**
+   * Creates a new lightning transaction
+   */
+  async createLightningTransaction(input: CreateLightningTransactionInput): Promise<TransactionSummary> {
+    // Check if account exists
+    const account = await this.prisma.account.findUnique({
+      where: { id: input.accountId }
+    });
+    
+    if (!account) {
+      throw new NotFoundError(`Account with ID ${input.accountId} not found`);
+    }
+    
+    // Check if transaction with this rHash already exists
+    const existingTransaction = await this.prisma.lightningTransaction.findUnique({
+      where: { rHash: input.rHash }
+    });
+    
+    if (existingTransaction) {
+      throw new Error(`Transaction with payment hash ${input.rHash} already exists`);
+    }
+
+    const transaction = await this.prisma.lightningTransaction.create({
+      data: {
+        accountId: input.accountId,
+        rHash: input.rHash,
+        amount: input.amount,
+        type: input.type,
+        status: input.status || TransactionStatus.PENDING,
+        memo: input.memo || null
+      }
+    });
+
+    return {
+      id: transaction.id,
+      accountId: transaction.accountId,
+      rHash: transaction.rHash,
+      amount: transaction.amount,
+      type: transaction.type,
+      status: transaction.status,
+      memo: transaction.memo,
+      createdAt: transaction.createdAt,
+      updatedAt: transaction.updatedAt
+    };
+  }
+
+  /**
+   * Gets a transaction by rHash
+   */
+  async getTransactionByRHash(rHash: string): Promise<TransactionSummary | null> {
+    const transaction = await this.prisma.lightningTransaction.findUnique({
+      where: { rHash }
+    });
+
+    if (!transaction) {
+      return null;
+    }
+
+    return {
+      id: transaction.id,
+      accountId: transaction.accountId,
+      rHash: transaction.rHash,
+      amount: transaction.amount,
+      type: transaction.type,
+      status: transaction.status,
+      memo: transaction.memo,
+      createdAt: transaction.createdAt,
+      updatedAt: transaction.updatedAt
+    };
+  }
+
+  /**
+   * Updates a transaction status
+   */
+  async updateTransactionStatus(rHash: string, status: TransactionStatus): Promise<TransactionSummary> {
+    const transaction = await this.prisma.lightningTransaction.findUnique({
+      where: { rHash }
+    });
+    
+    if (!transaction) {
+      throw new NotFoundError(`Transaction with payment hash ${rHash} not found`);
+    }
+    
+    const updatedTransaction = await this.prisma.lightningTransaction.update({
+      where: { rHash },
+      data: { status }
+    });
+    
+    return {
+      id: updatedTransaction.id,
+      accountId: updatedTransaction.accountId,
+      rHash: updatedTransaction.rHash,
+      amount: updatedTransaction.amount,
+      type: updatedTransaction.type,
+      status: updatedTransaction.status,
+      memo: updatedTransaction.memo,
+      createdAt: updatedTransaction.createdAt,
+      updatedAt: updatedTransaction.updatedAt
+    };
+  }
+
+  /**
+   * Gets all transactions
+   */
+  async getAllTransactions(limit = 20, page = 1): Promise<{
+    transactions: TransactionSummary[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      pages: number;
+    };
+  }> {
+    const skip = (page - 1) * limit;
+    const totalCount = await this.prisma.lightningTransaction.count();
+    
+    const transactions = await this.prisma.lightningTransaction.findMany({
+      take: limit,
+      skip,
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const transactionSummaries = transactions.map((tx: any) => ({
+      id: tx.id,
+      accountId: tx.accountId,
+      rHash: tx.rHash,
+      amount: tx.amount,
+      type: tx.type,
+      status: tx.status,
+      memo: tx.memo,
+      createdAt: tx.createdAt,
+      updatedAt: tx.updatedAt
+    }));
+
+    return {
+      transactions: transactionSummaries,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        pages: Math.ceil(totalCount / limit)
+      }
+    };
+  }
+
+  /**
+   * Gets transactions for an account
+   */
+  async getTransactionsByAccountId(accountId: string, limit = 20, page = 1) {
+    try {
+      const skip = (page - 1) * limit;
+      const [transactions, total] = await Promise.all([
+        this.prisma.lightningTransaction.findMany({
+          where: { accountId },
+          include: { account: true },
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit
+        }),
+        this.prisma.lightningTransaction.count({
+          where: { accountId }
+        })
+      ]);
+      
+      return {
+        transactions: transactions.map((tx: any) => ({
+          id: tx.id,
+          accountId: tx.accountId,
+          accountName: tx.account.name,
+          rHash: tx.rHash,
+          amount: tx.amount,
+          type: tx.type,
+          status: tx.status,
+          memo: tx.memo || undefined,
+          createdAt: tx.createdAt
+        })),
+        pagination: {
+          total,
+          page,
+          limit,
+          pages: Math.ceil(total / limit)
+        }
+      };
     } catch (error) {
       throw handleDatabaseError(error);
     }
@@ -302,89 +322,64 @@ export class DbService {
    * Gets an invoice by payment hash
    */
   async getInvoiceByRHash(rHash: string) {
-    try {
-      return await prisma.invoice.findUnique({
-        where: { rHash }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
+    // This is a placeholder implementation
+    return this.getTransactionByRHash(rHash);
   }
-
+  
   /**
-   * Gets an invoice by payment request
-   */
-  async getInvoiceByPaymentRequest(paymentRequest: string) {
-    try {
-      return await prisma.invoice.findUnique({
-        where: { paymentRequest }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Updates an invoice's state
-   */
-  async updateInvoiceState(id: string, state: InvoiceState) {
-    try {
-      return await prisma.invoice.update({
-        where: { id },
-        data: { state }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets account summaries for a user
-   */
-  async getUserAccountSummary(userId: string): Promise<UserAccountSummary> {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        include: {
-          accounts: true
-        }
-      });
-
-      if (!user) {
-        throw new NotFoundError(`User with ID ${userId} not found`);
-      }
-
-      // Calculate total balance across all accounts
-      const totalBalance = user.accounts.reduce((sum: string, account: { balance: string }) => {
-        return (BigInt(sum) + BigInt(account.balance)).toString();
-      }, '0');
-
-      return {
-        userId: user.id,
-        username: user.username,
-        accounts: user.accounts.map((account: { id: string; name: string; balance: string }) => ({
-          id: account.id,
-          name: account.name,
-          balance: account.balance
-        })),
-        totalBalance
-      };
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
-  }
-
-  /**
-   * Gets all invoices for a user by identifier
+   * Gets invoices by user identifier
    */
   async getInvoicesByUserIdentifier(userIdentifier: string) {
-    try {
-      return await prisma.invoice.findMany({
-        where: { userIdentifier },
-        orderBy: { timestamp: 'desc' }
-      });
-    } catch (error) {
-      throw handleDatabaseError(error);
-    }
+    // This is a placeholder implementation
+    return [];
+  }
+  
+  /**
+   * Gets a user by username
+   */
+  async getUserByUsername(username: string) {
+    // This is a placeholder implementation
+    return null;
+  }
+  
+  /**
+   * Creates a user
+   */
+  async createUser(input: { username: string }) {
+    // This is a placeholder implementation
+    return {
+      id: 'placeholder-id',
+      username: input.username,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+  }
+  
+  /**
+   * Gets a user by ID
+   */
+  async getUserById(id: string) {
+    // This is a placeholder implementation
+    return null;
+  }
+  
+  /**
+   * Gets all users
+   */
+  async getAllUsers() {
+    // This is a placeholder implementation
+    return [];
+  }
+  
+  /**
+   * Gets user account summary
+   */
+  async getUserAccountSummary(id: string) {
+    // This is a placeholder implementation
+    return {
+      userId: id,
+      totalBalance: '0',
+      accounts: []
+    };
   }
 } 

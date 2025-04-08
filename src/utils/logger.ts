@@ -1,4 +1,4 @@
-import winston from 'winston';
+import * as winston from 'winston';
 
 // Create a logger instance
 export const logger = winston.createLogger({

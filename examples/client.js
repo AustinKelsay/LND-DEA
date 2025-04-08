@@ -1,150 +1,111 @@
 /**
- * Example client for LND Wallet Segregation API
- * This demonstrates how to interact with the API to manage accounts and transactions
+ * Example client for interacting with the Wallet Segregation API
  */
-
 const fetch = require('node-fetch');
 
 // Configuration
-const API_URL = process.env.API_URL || 'http://localhost:3000/api';
+const API_URL = 'http://localhost:3000/api';
 const API_KEY = process.env.API_KEY || 'your-api-key';
 
-/**
- * Make an API request
- */
-async function makeRequest(endpoint, method = 'GET', data = null) {
+// Helper function for making API requests
+async function apiRequest(endpoint, method = 'GET', data = null) {
+  const url = `${API_URL}${endpoint}`;
   const options = {
     method,
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': API_KEY
-    }
+    },
+    ...(data && { body: JSON.stringify(data) })
   };
 
-  if (data) {
-    options.body = JSON.stringify(data);
+  console.log(`Making ${method} request to ${url}`);
+  
+  const response = await fetch(url, options);
+  const responseData = await response.json();
+  
+  if (!response.ok) {
+    throw new Error(`API Error: ${responseData.error || 'Unknown error'}`);
   }
-
-  try {
-    const response = await fetch(`${API_URL}${endpoint}`, options);
-    const jsonResponse = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(`API error: ${jsonResponse.message || response.statusText}`);
-    }
-    
-    return jsonResponse;
-  } catch (error) {
-    console.error(`Error calling ${endpoint}:`, error.message);
-    throw error;
-  }
+  
+  return responseData;
 }
 
-/**
- * Create a new account
- */
+// Example functions for interacting with the API
 async function createAccount(name, description = '') {
-  console.log(`Creating account "${name}"...`);
-  const response = await makeRequest('/accounts', 'POST', {
-    name,
-    description
-  });
-  
-  console.log('Account created:', response.data);
-  return response.data;
+  return apiRequest('/accounts', 'POST', { name, description });
 }
 
-/**
- * Get all accounts
- */
 async function getAccounts() {
-  console.log('Getting all accounts...');
-  const response = await makeRequest('/accounts');
-  
-  console.log(`Retrieved ${response.data.length} accounts`);
-  return response.data;
+  return apiRequest('/accounts');
 }
 
-/**
- * Get account by ID
- */
-async function getAccount(id) {
-  console.log(`Getting account with ID ${id}...`);
-  const response = await makeRequest(`/accounts/${id}`);
-  
-  console.log('Account details:', response.data);
-  return response.data;
+async function getAccountByName(name) {
+  return apiRequest(`/accounts/name/${name}`);
 }
 
-/**
- * Create a new transaction
- */
-async function createTransaction(accountId, rHash, amount, type, status, memo = '') {
-  console.log(`Creating ${type} transaction for account ${accountId}...`);
-  const response = await makeRequest('/transactions', 'POST', {
-    accountId,
-    rHash,
-    amount,
-    type,
-    status,
-    memo
-  });
-  
-  console.log('Transaction created:', response.data);
-  return response.data;
-}
-
-/**
- * Get account balance
- */
 async function getAccountBalance(accountId) {
-  console.log(`Getting balance for account ${accountId}...`);
-  const response = await makeRequest(`/accounts/${accountId}/balance`);
-  
-  console.log('Account balance:', response.data);
-  return response.data;
+  return apiRequest(`/accounts/${accountId}/balance`);
 }
 
-/**
- * Run the example
- */
+async function recordTransaction(accountId, rHash, amount, type = 'INCOMING', status = 'COMPLETE', memo = '') {
+  return apiRequest('/transactions', 'POST', {
+    accountId, rHash, amount, type, status, memo
+  });
+}
+
+async function getTransactions(page = 1, limit = 10) {
+  return apiRequest(`/transactions?page=${page}&limit=${limit}`);
+}
+
+// Example usage flow
 async function runExample() {
   try {
-    // 1. Create a test account
-    const account = await createAccount('example_user', 'Example Account for Testing');
+    console.log('=== Wallet Segregation API Example Client ===');
     
-    // 2. Create an incoming transaction
-    const incomingTx = await createTransaction(
-      account.id,
-      `incoming_${Date.now().toString(16)}`, // Generate a unique rHash
-      '5000', // 5000 satoshis
+    // 1. Create an account
+    console.log('\n1. Creating new account...');
+    const accountResponse = await createAccount('example_user', 'Example user account');
+    console.log('Account created:', accountResponse.data);
+    
+    const accountId = accountResponse.data.id;
+    
+    // 2. Record a transaction for this account
+    console.log('\n2. Recording a transaction...');
+    const transactionResponse = await recordTransaction(
+      accountId,
+      'd45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9',
+      '50000',
       'INCOMING',
       'COMPLETE',
-      'Example incoming payment'
+      'Example payment'
     );
+    console.log('Transaction recorded:', transactionResponse.data);
     
-    // 3. Create an outgoing transaction
-    const outgoingTx = await createTransaction(
-      account.id,
-      `outgoing_${Date.now().toString(16)}`, // Generate a unique rHash
-      '2000', // 2000 satoshis
-      'OUTGOING',
-      'COMPLETE',
-      'Example outgoing payment'
-    );
+    // 3. Get the account balance
+    console.log('\n3. Getting account balance...');
+    const balanceResponse = await getAccountBalance(accountId);
+    console.log('Account balance:', balanceResponse.data);
     
-    // 4. Check the account balance
-    await getAccountBalance(account.id);
+    // 4. List all accounts
+    console.log('\n4. Listing all accounts...');
+    const accountsResponse = await getAccounts();
+    console.log(`Found ${accountsResponse.data.length} accounts:`);
+    accountsResponse.data.forEach(account => {
+      console.log(`- ${account.name} (${account.id}): ${account.description}`);
+    });
     
+    // 5. List all transactions
+    console.log('\n5. Listing transactions...');
+    const transactionsResponse = await getTransactions();
+    console.log(`Found ${transactionsResponse.data.length} transactions`);
+    console.log('Pagination info:', transactionsResponse.pagination);
+    
+    console.log('\n=== Example completed successfully ===');
   } catch (error) {
-    console.error('Example failed:', error);
+    console.error('Error:', error.message);
   }
 }
 
-// Run the example if executed directly
-if (require.main === module) {
-  console.log('Starting LND Wallet Segregation API example...');
-  runExample()
-    .then(() => console.log('Example completed successfully'))
-    .catch(err => console.error('Example failed:', err));
-} 
+// Run the example
+runExample(); 

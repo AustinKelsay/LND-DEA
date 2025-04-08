@@ -9,6 +9,7 @@ import { AppError } from './utils/errors';
 import { createLndMonitorService } from './services/lndMonitorService';
 import lndService from './services/lndService';
 import { logger } from './utils/logger';
+import { Request, Response, NextFunction } from 'express';
 
 // Load environment variables
 dotenv.config();
@@ -42,13 +43,14 @@ app.get('/health', async (_req, res) => {
     
     // Check LND connection if configured
     let lndStatus = 'disabled';
-    if (lndService.isConfigured()) {
-      try {
-        await lndService.getInfo();
-        lndStatus = 'connected';
-      } catch (error) {
-        lndStatus = 'error';
-      }
+    try {
+      // If LND is not configured, getInfo will throw an error
+      await lndService.getInfo();
+      lndStatus = 'connected';
+    } catch (error: unknown) {
+      // Check if the error message indicates configuration issue
+      const errorMsg = String(error);
+      lndStatus = errorMsg.includes('not configured') ? 'disabled' : 'error';
     }
     
     res.json({ 
@@ -56,7 +58,7 @@ app.get('/health', async (_req, res) => {
       database: 'connected',
       lnd: lndStatus
     });
-  } catch (error) {
+  } catch (error: unknown) {
     res.status(500).json({ 
       status: 'error',
       message: 'Health check failed',
@@ -95,7 +97,7 @@ function shutdown() {
         logger.info('Database connection closed');
         process.exit(0);
       })
-      .catch(error => {
+      .catch((error: unknown) => {
         logger.error('Error closing database connection:', error);
         process.exit(1);
       });
@@ -103,7 +105,7 @@ function shutdown() {
 }
 
 // Handle global unhandled promise rejections
-process.on('unhandledRejection', (reason: unknown) => {
+process.on('unhandledRejection', (reason: Error | unknown) => {
   logger.error('Unhandled Promise Rejection:', reason);
   
   // Convert unhandled rejections to proper AppErrors

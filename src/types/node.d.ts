@@ -25,4 +25,34 @@ declare global {
   }
 }
 
+/**
+ * Type declarations for Node.js built-in modules
+ */
+
+declare module 'fs' {
+  export * from 'node:fs';
+}
+
+declare module 'http' {
+  export * from 'node:http';
+}
+
+declare module 'https' {
+  export * from 'node:https';
+}
+
+declare module 'path' {
+  export * from 'node:path';
+}
+
+declare module 'crypto' {
+  export * from 'node:crypto';
+}
+
+declare global {
+  interface Buffer extends Uint8Array {
+    // Buffer already has its type definitions in @types/node
+  }
+}
+
 export {}; 

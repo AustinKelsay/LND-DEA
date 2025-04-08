@@ -6,7 +6,7 @@ services:
     image: postgres:14-alpine
     container_name: lnd-ws-postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -31,14 +31,18 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=development
+      # Use postgres as hostname since we're in Docker
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/lnd_wallet_segregation?schema=public
-      - PORT=3000
-      # The LND credentials should be set in a .env file or passed directly to docker-compose
-      - LND_REST_HOST=${LND_REST_HOST:-localhost:8080}
-      - LND_MACAROON_PATH=${LND_MACAROON_PATH:-}
-      - LND_TLS_CERT_PATH=${LND_TLS_CERT_PATH:-}
-      - USER_IDENTIFIER_PATTERN=${USER_IDENTIFIER_PATTERN:-}
+      # Load all other environment variables from .env
+      - NODE_ENV=${NODE_ENV}
+      - PORT=${PORT}
+      - LND_REST_HOST=${LND_REST_HOST}
+      - LND_MACAROON_PATH=${LND_MACAROON_PATH}
+      - LND_TLS_CERT_PATH=${LND_TLS_CERT_PATH}
+      - USER_IDENTIFIER_PATTERN=${USER_IDENTIFIER_PATTERN}
+      - API_KEY=${API_KEY}
+    env_file:
+      - .env
     volumes:
       - ./prisma:/app/prisma
     restart: on-failure
@@ -52,6 +56,10 @@ services:
         echo 'Starting application...' &&
         npm start
       "
+    # Adding DNS servers to properly resolve external hostnames
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
 volumes:
   postgres_data: 

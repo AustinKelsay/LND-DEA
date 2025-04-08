@@ -1,10 +1,11 @@
 import { LndInvoice } from '../types/lnd';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../utils/logger';
-import { lndService } from './lndService';
+import lndService from './lndService';
 
 export class LndMonitorService {
   private prisma: PrismaClient;
+  private interval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.prisma = new PrismaClient();
@@ -176,5 +177,44 @@ export class LndMonitorService {
     }
   }
 
-  // ... existing code ...
+  /**
+   * Start monitoring LND for new transactions
+   */
+  start(intervalMs = 60000): void {
+    if (this.interval) {
+      return; // Already running
+    }
+    
+    logger.info(`Starting LND monitor service (interval: ${intervalMs}ms)`);
+    
+    // Check immediately on start
+    this.checkForNewTransactions();
+    
+    // Then set up regular polling
+    this.interval = setInterval(() => {
+      this.checkForNewTransactions();
+    }, intervalMs);
+  }
+  
+  /**
+   * Stop monitoring LND
+   */
+  stop(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+      logger.info('Stopped LND monitor service');
+    }
+  }
 }
+
+/**
+ * Create and return an instance of the LndMonitorService
+ */
+export function createLndMonitorService(prisma?: PrismaClient): LndMonitorService {
+  const service = new LndMonitorService();
+  return service;
+}
+
+// Singleton instance
+export const lndMonitor = createLndMonitorService();

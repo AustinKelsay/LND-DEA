@@ -1,16 +1,40 @@
+import { logger } from './logger';
+
 /**
- * Base application error class
+ * Base application error class that extends Error
  */
 export class AppError extends Error {
   statusCode: number;
   errors?: Record<string, string>;
+  isOperational: boolean;
 
   constructor(message: string, statusCode = 500, errors?: Record<string, string>) {
     super(message);
     this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.errors = errors;
+    this.isOperational = true; // Indicates if this is an expected error that's handled
+    
+    // Ensure the proper prototype chain
+    Object.setPrototypeOf(this, AppError.prototype);
+    
+    // Capture stack trace, excluding the constructor call from the stack
     Error.captureStackTrace(this, this.constructor);
+    
+    // Log the error automatically when it's created
+    this.logError();
+  }
+  
+  /**
+   * Log the error details
+   */
+  logError(): void {
+    const logLevel = this.statusCode >= 500 ? 'error' : 'warn';
+    logger[logLevel](`${this.name}: ${this.message}`, {
+      statusCode: this.statusCode,
+      errors: this.errors,
+      stack: this.stack
+    });
   }
 }
 
@@ -62,38 +86,132 @@ export class DatabaseError extends AppError {
 }
 
 /**
- * Error class for validation errors
+ * 400 Bad Request - Used for validation errors
  */
 export class ValidationError extends AppError {
-  constructor(message: string, errors?: Record<string, string>) {
+  constructor(message = 'Validation error', errors?: Record<string, string>) {
     super(message, 400, errors);
+    this.name = 'ValidationError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, ValidationError.prototype);
   }
 }
 
 /**
- * Error class for authentication errors
+ * 401 Unauthorized - Used for authentication errors
  */
-export class AuthenticationError extends AppError {
-  constructor(message: string) {
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Authentication required') {
     super(message, 401);
+    this.name = 'UnauthorizedError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, UnauthorizedError.prototype);
   }
 }
 
 /**
- * Error class for authorization errors
+ * 403 Forbidden - Used for authorization errors
  */
-export class AuthorizationError extends AppError {
-  constructor(message: string) {
+export class ForbiddenError extends AppError {
+  constructor(message = 'Access denied') {
     super(message, 403);
+    this.name = 'ForbiddenError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, ForbiddenError.prototype);
   }
 }
 
 /**
- * Error class for not found errors
+ * 404 Not Found - Used when a resource is not found
  */
 export class NotFoundError extends AppError {
-  constructor(message: string) {
+  constructor(message = 'Resource not found') {
     super(message, 404);
+    this.name = 'NotFoundError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, NotFoundError.prototype);
+  }
+}
+
+/**
+ * 409 Conflict - Used for resource conflicts
+ */
+export class ConflictError extends AppError {
+  constructor(message = 'Resource conflict', errors?: Record<string, string>) {
+    super(message, 409, errors);
+    this.name = 'ConflictError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, ConflictError.prototype);
+  }
+}
+
+/**
+ * 422 Unprocessable Entity - When semantically correct but unable to process
+ */
+export class UnprocessableEntityError extends AppError {
+  constructor(message = 'Unprocessable entity', errors?: Record<string, string>) {
+    super(message, 422, errors);
+    this.name = 'UnprocessableEntityError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, UnprocessableEntityError.prototype);
+  }
+}
+
+/**
+ * 500 Internal Server Error - For unexpected server errors
+ */
+export class InternalServerError extends AppError {
+  constructor(message = 'Internal server error') {
+    super(message, 500);
+    this.name = 'InternalServerError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, InternalServerError.prototype);
+  }
+}
+
+/**
+ * 502 Bad Gateway - When an upstream service returns an invalid response
+ */
+export class BadGatewayError extends AppError {
+  constructor(message = 'Bad gateway error') {
+    super(message, 502);
+    this.name = 'BadGatewayError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, BadGatewayError.prototype);
+  }
+}
+
+/**
+ * 503 Service Unavailable - When a service is temporarily unavailable
+ */
+export class ServiceUnavailableError extends AppError {
+  constructor(message = 'Service temporarily unavailable') {
+    super(message, 503);
+    this.name = 'ServiceUnavailableError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, ServiceUnavailableError.prototype);
+  }
+}
+
+/**
+ * 504 Gateway Timeout - When an upstream service times out
+ */
+export class GatewayTimeoutError extends AppError {
+  constructor(message = 'Gateway timeout') {
+    super(message, 504);
+    this.name = 'GatewayTimeoutError';
+    
+    // Ensure proper prototype chain
+    Object.setPrototypeOf(this, GatewayTimeoutError.prototype);
   }
 }
 

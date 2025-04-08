@@ -1,6 +1,6 @@
+import fs from 'fs';
 import https from 'https';
 import { IncomingMessage } from 'http';
-import fs from 'fs';
 import { logger } from '../utils/logger';
 import { 
   LndInfo, 
@@ -110,27 +110,38 @@ export class LndService {
   }
 
   /**
-   * Make a request to the LND REST API
+   * Check if LND connection is properly configured
    */
-  private async makeRequest<T>(method: string, path: string, data?: any): Promise<T> {
+  private isConfigured(): boolean {
+    return Boolean(this.host && this.macaroonHex);
+  }
+
+  /**
+   * Generic method to make requests to the LND REST API
+   */
+  private async makeRequest<T>(method: string, endpoint: string, data?: any): Promise<T> {
+    if (!this.isConfigured()) {
+      throw new LndApiError('LND connection not configured correctly', 500, '');
+    }
+
     return new Promise<T>((resolve, reject) => {
-      // Check if LND integration is configured
-      if (!this.host || !this.macaroonHex) {
-        return reject(new LndApiError('LND integration not configured', 500));
-      }
-
+      // Parse hostname and port separately
       const [hostname, portStr] = this.host.split(':');
-      const port = portStr ? parseInt(portStr) : 8080;
-
+      // Default to port 8080 if not specified
+      const port = portStr ? parseInt(portStr, 10) : 8080;
+      
+      // Log connection details for debugging
+      logger.debug(`Connecting to LND REST API at ${hostname}:${port}`);
+      
       const options = {
+        method,
         hostname,
         port,
-        path,
-        method,
+        path: `/v1/${endpoint}`,
         headers: {
           'Grpc-Metadata-macaroon': this.macaroonHex,
         },
-        ca: this.tlsCert || undefined
+        rejectUnauthorized: false,
       };
 
       const req = https.request(options, (res: IncomingMessage) => {
@@ -176,14 +187,14 @@ export class LndService {
    * Get node info
    */
   async getInfo(): Promise<LndInfo> {
-    return this.makeRequest<LndInfo>('GET', '/v1/getinfo');
+    return this.makeRequest<LndInfo>('GET', 'getinfo');
   }
 
   /**
    * Get a list of all invoices
    */
   async listInvoices(numMaxInvoices = 100): Promise<LndInvoicesResponse> {
-    const response = await this.makeRequest<LndInvoicesResponse>('GET', `/v1/invoices?num_max_invoices=${numMaxInvoices}`);
+    const response = await this.makeRequest<LndInvoicesResponse>('GET', `invoices?num_max_invoices=${numMaxInvoices}`);
     
     // Normalize r_hash values to hex strings for consistency
     if (response.invoices) {
@@ -202,7 +213,7 @@ export class LndService {
   async listPayments(includeIncomplete = true, maxPayments = 100): Promise<LndPaymentsResponse> {
     return this.makeRequest<LndPaymentsResponse>(
       'GET', 
-      `/v1/payments?include_incomplete=${includeIncomplete}&max_payments=${maxPayments}`
+      `payments?include_incomplete=${includeIncomplete}&max_payments=${maxPayments}`
     );
   }
 
@@ -215,21 +226,21 @@ export class LndService {
       memo,
       expiry
     };
-    return this.makeRequest<LndCreateInvoiceResponse>('POST', '/v1/invoices', requestData);
+    return this.makeRequest<LndCreateInvoiceResponse>('POST', 'invoices', requestData);
   }
 
   /**
    * Decode a payment request
    */
   async decodePaymentRequest(payReq: string): Promise<LndDecodedPaymentRequest> {
-    return this.makeRequest<LndDecodedPaymentRequest>('GET', `/v1/payreq/${payReq}`);
+    return this.makeRequest<LndDecodedPaymentRequest>('GET', `payreq/${payReq}`);
   }
 
   /**
    * Send payment using a payment request
    */
   async sendPayment(paymentRequest: string): Promise<LndSendPaymentResponse> {
-    return this.makeRequest<LndSendPaymentResponse>('POST', '/v1/channels/transactions', {
+    return this.makeRequest<LndSendPaymentResponse>('POST', 'channels/transactions', {
       payment_request: paymentRequest
     });
   }
@@ -256,13 +267,6 @@ export class LndService {
   async settleInvoice(rHash: string): Promise<any> {
     // Implementation would depend on your application logic
     return { success: true };
-  }
-
-  /**
-   * Check if LND connection is configured properly
-   */
-  isConfigured(): boolean {
-    return Boolean(this.host && this.macaroonHex);
   }
 }
 

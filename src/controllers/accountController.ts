@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { asyncHandler } from '../middleware/errorHandler';
 import { ValidationError, NotFoundError } from '../utils/errors';
+import { DbService } from '../services/dbService';
 
-const prisma = new PrismaClient();
+const dbService = new DbService();
 
 /**
  * Account controller for handling account-related requests
@@ -19,11 +19,9 @@ export class AccountController {
       throw new ValidationError('Account name is required', { name: 'Account name is required' });
     }
 
-    const account = await prisma.account.create({
-      data: {
-        name,
-        description
-      }
+    const account = await dbService.createAccount({
+      name,
+      description
     });
 
     res.status(201).json({ success: true, data: account });
@@ -33,42 +31,19 @@ export class AccountController {
    * Get all accounts
    */
   getAllAccounts = asyncHandler(async (req: Request, res: Response) => {
-    // Parse pagination parameters
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
-
-    // Get total count for pagination metadata
-    const totalCount = await prisma.account.count();
-    
-    // Get paginated accounts
-    const accounts = await prisma.account.findMany({
-      take: limit,
-      skip,
-      orderBy: { createdAt: 'desc' }
-    });
-    
-    res.json({ 
-      success: true, 
-      data: accounts,
-      pagination: {
-        total: totalCount,
-        page,
-        limit,
-        pages: Math.ceil(totalCount / limit)
-      }
-    });
+    const page = parseInt(req.query.page as string || '1');
+    const limit = parseInt(req.query.limit as string || '20');
+    const accounts = await dbService.getAllAccounts(limit, page);
+    res.json({ success: true, data: accounts });
   });
 
   /**
    * Get account by ID
    */
   getAccountById = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
+    const { id } = req.params;
     
-    const account = await prisma.account.findUnique({
-      where: { id }
-    });
+    const account = await dbService.getAccount(id);
     
     if (!account) {
       throw new NotFoundError(`Account with ID ${id} not found`);
@@ -81,11 +56,12 @@ export class AccountController {
    * Get account by name
    */
   getAccountByName = asyncHandler(async (req: Request, res: Response) => {
-    const { name } = req.params as { name: string };
+    const { name } = req.params;
     
-    const account = await prisma.account.findUnique({
-      where: { name }
-    });
+    // Note: Since there's no explicit getAccountByName method, we need to implement alternative logic
+    // For example, get all accounts and filter by name
+    const allAccounts = await dbService.getAllAccounts();
+    const account = allAccounts.accounts.find(acc => acc.name === name);
     
     if (!account) {
       throw new NotFoundError(`Account with name ${name} not found`);
@@ -98,44 +74,24 @@ export class AccountController {
    * Get transactions for an account
    */
   getAccountTransactions = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
-    // Parse pagination parameters
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
+    const { id } = req.params;
+    const page = parseInt(req.query.page as string || '1');
+    const limit = parseInt(req.query.limit as string || '20');
     
-    // Check if account exists
-    const accountExists = await prisma.account.findUnique({
-      where: { id },
-      select: { id: true }
-    });
+    // First, check if the account exists
+    const account = await dbService.getAccount(id);
     
-    if (!accountExists) {
+    if (!account) {
       throw new NotFoundError(`Account with ID ${id} not found`);
     }
-
-    // Get total count of transactions for this account
-    const totalCount = await prisma.lightningTransaction.count({
-      where: { accountId: id }
-    });
     
-    // Get paginated transactions
-    const transactions = await prisma.lightningTransaction.findMany({
-      where: { accountId: id },
-      take: limit,
-      skip,
-      orderBy: { createdAt: 'desc' }
-    });
+    // Use the available getTransactionsByAccountId method
+    const result = await dbService.getTransactionsByAccountId(id, limit, page);
     
-    res.json({ 
-      success: true, 
-      data: transactions,
-      pagination: {
-        total: totalCount,
-        page,
-        limit,
-        pages: Math.ceil(totalCount / limit)
-      }
+    res.json({
+      success: true,
+      data: result.transactions,
+      pagination: result.pagination
     });
   });
 
@@ -143,37 +99,17 @@ export class AccountController {
    * Get account balance
    */
   getAccountBalance = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params as { id: string };
+    const { id } = req.params;
     
-    const account = await prisma.account.findUnique({
-      where: { id },
-      include: { transactions: true }
-    });
+    const accountSummary = await dbService.getAccount(id);
     
-    if (!account) {
+    if (!accountSummary) {
       throw new NotFoundError(`Account with ID ${id} not found`);
     }
     
-    // Calculate balance by summing incoming and subtracting outgoing
-    const balance = account.transactions
-      .filter(tx => tx.status === 'COMPLETE') // Only include COMPLETE transactions
-      .reduce((sum, tx) => {
-      const amount = BigInt(tx.amount);
-      
-      if (tx.type === 'INCOMING') {
-        return sum + amount;
-      } else {
-        return sum - amount;
-      }
-    }, BigInt(0));
-    
     res.json({ 
       success: true, 
-      data: { 
-        accountId: id, 
-        balance: balance.toString(),
-        name: account.name
-      } 
+      data: { balance: accountSummary.balance }
     });
   });
 } 
