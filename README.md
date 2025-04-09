@@ -17,7 +17,6 @@ This project deliberately keeps a minimal footprint:
 - It doesn't duplicate all data from your LND node
 - It implements proper double-entry accounting for LND transactions
 - It provides a simple API to query transactions by account
-- It abstracts all LND interactions for applications using the system
 
 ## Technical Features
 
@@ -30,8 +29,9 @@ This project deliberately keeps a minimal footprint:
 - **Comprehensive Logging**: Structured logging for easy debugging and monitoring
 - **LND Connectivity Testing**: Endpoint to verify LND node connection status
 - **Webhook Notifications**: Support for registering webhook endpoints to receive real-time payment notifications
-- **Invoice Subscription**: Built-in polling system to monitor invoice status changes
+- **Invoice Subscription**: Built-in polling system to monitor invoice status changes without WebSocket dependencies
 - **Account-Specific Operations**: Create invoices and send payments directly from specific accounts
+- **Secure Webhook Verification**: HMAC-SHA256 signature verification for webhook payloads
 
 ## Type System
 
@@ -441,7 +441,7 @@ Response:
       "payment_request": "lnbc10u1p3hkng4pp5fpffsrgxp7tpfxhezfvxgvjsd74zj6jn8wm6l39ycnm5crr4mqsdqqcqzpgxqyz5vqsp5hsfy5n97pswkx3uqp5zr5hgqkc4hz7g97anw0hvg8z4rkzcvwuks9qyyssq5g2ff40lf3fnk0k2hxp0cw9xk4ksyauhal3hjvf9n4r898vg4q4d02hlq2js7tpvwpvstmkw22du7y7u6xutkm8fay96cpf4gd0sqea5h49",
       "value": "1000",
       "memo": "Payment for services userid:user123",
-      // Additional invoice fields...
+      "settled": false
     },
     "transaction": {
       "id": "9c8b7a6f-5e4d-3c2b-1a0f-9e8d7c6b5a4e",
@@ -454,6 +454,37 @@ Response:
       "createdAt": "2023-06-25T12:35:56.789Z",
       "updatedAt": "2023-06-25T12:35:56.789Z"
     }
+  }
+}
+```
+
+### Associate a transaction with an account
+```
+POST /api/transactions
+{
+  "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+  "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+  "amount": "1000",
+  "type": "INCOMING",
+  "status": "COMPLETE",
+  "memo": "Payment for services"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "9c8b7a6f-5e4d-3c2b-1a0f-9e8d7c6b5a4e",
+    "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+    "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+    "amount": "1000",
+    "type": "INCOMING",
+    "status": "COMPLETE",
+    "memo": "Payment for services",
+    "createdAt": "2023-06-25T12:35:56.789Z",
+    "updatedAt": "2023-06-25T12:35:56.789Z"
   }
 }
 ```
@@ -478,7 +509,6 @@ Response:
       "value_sat": "1000",
       "value_msat": "1000000",
       "status": "SUCCEEDED"
-      // Additional payment fields...
     },
     "transaction": {
       "id": "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6",
@@ -577,6 +607,208 @@ Response:
 }
 ```
 
+## Docker Setup
+
+### Running with Docker Compose
+
+The application can be easily run using Docker Compose, which will set up both the application and the PostgreSQL database:
+
+```bash
+# Build and start Docker containers
+docker-compose build
+docker-compose up -d
+```
+
+This will:
+1. Build the Docker image
+2. Start the PostgreSQL and application containers
+3. Initialize the database schema
+4. Start the application
+
+Once running, you can access the application at http://localhost:3000.
+
+### Environment Configuration
+
+The application uses a single `.env` file for configuration. When running with Docker, the database connection is automatically configured to use the Docker service name.
+
+Example `.env` file:
+
+```
+# Database connection - for local development
+# Docker overrides this to use the postgres service
+DATABASE_URL="postgresql://postgres:password@localhost:5433/lnd_double_entry_accounting?schema=public"
+
+# LND connection
+LND_REST_HOST="your-lnd-node:8080"
+LND_MACAROON_PATH="your-macaroon-hex-string"
+LND_TLS_CERT_PATH="your-certificate-base64-string"
+
+# Optional: User identification pattern
+USER_IDENTIFIER_PATTERN="userid:([a-zA-Z0-9]+)"
+
+# API authentication (optional but recommended)
+API_KEY="your-secure-api-key"
+
+# Server
+PORT=3000
+NODE_ENV=development
+```
+
+## Installation for Development
+
+### Prerequisites
+- Node.js 18 or newer
+- PostgreSQL database
+- Access to an LND node with REST API enabled
+
+### Setup
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/lnd-double-entry-accounting.git
+cd lnd-double-entry-accounting
+
+# Install dependencies
+npm install
+
+# Create .env file
+cp .env.sample .env
+# Edit .env file with your configuration
+
+# Generate Prisma client
+npm run generate
+
+# Run Prisma migrations
+npm run migrate:dev
+
+# Build TypeScript
+npm run build
+
+# Start the server
+npm start
+```
+
+## Implementation & Integration
+
+### Authentication
+
+The API is protected with a simple API key authentication system. To make requests:
+
+1. Set the `API_KEY` environment variable in your `.env` file
+2. Include this key in the `X-API-Key` header with every request:
+
+```bash
+curl -H "X-API-Key: your-secure-api-key" http://localhost:3000/api/accounts
+```
+
+If no API_KEY is set in the environment, authentication will be disabled with a warning.
+
+### Subscription System
+
+LND-DEA uses a polling-based system to monitor invoice status changes rather than WebSockets. This approach:
+
+1. Is more compatible with various deployment environments
+2. Doesn't require additional dependencies
+3. Works reliably behind proxies and load balancers
+4. Automatically retries on connection issues
+
+The polling interval is configurable and defaults to 10 seconds. The system monitors all invoices and triggers appropriate webhooks when statuses change.
+
+Individual applications can also subscribe to specific invoice updates by using the appropriate API endpoints.
+
+### Integrating with Your Application
+
+With the latest enhancements, integrating this double-entry accounting system with your LND-based application is now simpler:
+
+1. **Create Accounts**: Create accounts for users or purposes
+2. **Create Invoices**: Generate invoices directly tied to specific accounts
+3. **Register Webhooks**: Set up webhooks to receive notifications when payments are made
+4. **Send Payments**: Send payments from accounts with automatic balance validation
+
+Example integration using the direct API:
+
+```javascript
+// Create an invoice for an account
+const invoiceResponse = await fetch('http://localhost:3000/api/invoices/incoming', {
+  method: 'POST',
+  headers: { 
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key' 
+  },
+  body: JSON.stringify({
+    accountId: '3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d',
+    amount: '1000',
+    memo: 'Payment for services'
+  })
+});
+
+const { data } = await invoiceResponse.json();
+const paymentRequest = data.invoice.payment_request;
+
+// Send this payment request to the user for payment
+// When payment is received, the system will automatically:
+// 1. Detect the payment via LND polling
+// 2. Update the transaction status in the database
+// 3. Send a webhook notification to your application
+```
+
+You can also use the traditional approach if you're manually handling invoice creation and just need accounting:
+
+```javascript
+// When an invoice is paid in LND
+lnd.subscribeInvoices().on('invoice_paid', async (invoice) => {
+  // Determine which account this payment belongs to
+  // e.g., from custom fields in the invoice memo
+  const accountId = determineAccountFromInvoice(invoice);
+  
+  // Record the transaction in our double-entry accounting system
+  await fetch('http://localhost:3000/api/transactions', {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      'X-API-Key': 'your-api-key' 
+    },
+    body: JSON.stringify({
+      accountId,
+      rHash: invoice.r_hash.toString('hex'),
+      amount: invoice.value.toString(),
+      type: 'INCOMING',
+      status: 'COMPLETE',
+      memo: invoice.memo
+    })
+  });
+});
+```
+
+### Register a webhook to receive notifications
+
+```javascript
+const webhookResponse = await fetch('http://localhost:3000/api/webhooks', {
+  method: 'POST',
+  headers: { 
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key' 
+  },
+  body: JSON.stringify({
+    accountId: '3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d',
+    url: 'https://your-app.com/webhooks/lightning',
+    secret: 'your-webhook-secret'
+  })
+});
+
+// Your application will now receive webhook notifications at the specified URL
+// when invoices are created or paid for this account
+```
+
+### Testing LND Connectivity
+
+To verify your connection to the LND node is working:
+
+```bash
+curl http://localhost:3000/api/lnd/info
+```
+
+This will return information about your node if the connection is successful, or an error if there are issues with the connection.
+
 ## Webhook Notifications
 
 The system supports webhook notifications for various events related to lightning transactions. When a registered event occurs, the system will send an HTTP POST request to the configured webhook URL with a JSON payload.
@@ -630,134 +862,6 @@ function verifyWebhookSignature(payload, signature, secret) {
   );
 }
 ```
-
-## Docker Setup
-
-### Running with Docker Compose
-
-The application can be easily run using Docker Compose, which will set up both the application and the PostgreSQL database:
-
-```bash
-# Build and start Docker containers
-docker-compose build
-docker-compose up -d
-```
-
-This will:
-1. Build the Docker image
-2. Start the PostgreSQL and application containers
-3. Initialize the database schema
-4. Start the application
-
-Once running, you can access the application at http://localhost:3000.
-
-### Environment Configuration
-
-The application uses a single `.env` file for configuration. When running with Docker, the database connection is automatically configured to use the Docker service name.
-
-Example `.env` file:
-
-```
-# Database connection - for local development
-# Docker overrides this to use the postgres service
-DATABASE_URL="postgresql://postgres:password@localhost:5433/lnd_double_entry_accounting?schema=public"
-
-# LND connection
-LND_REST_HOST="your-lnd-node:8080"
-LND_MACAROON_PATH="your-macaroon-hex-string"
-LND_TLS_CERT_PATH="your-certificate-base64-string"
-
-# Optional: User identification pattern
-USER_IDENTIFIER_PATTERN="userid:([a-zA-Z0-9]+)"
-
-# API authentication (optional but recommended)
-API_KEY="your-secure-api-key"
-
-# Server
-PORT=3000
-NODE_ENV=development
-```
-
-## Implementation & Integration
-
-### Authentication
-
-The API is protected with a simple API key authentication system. To make requests:
-
-1. Set the `API_KEY` environment variable in your `.env` file
-2. Include this key in the `X-API-Key` header with every request:
-
-```bash
-curl -H "X-API-Key: your-secure-api-key" http://localhost:3000/api/accounts
-```
-
-If no API_KEY is set in the environment, authentication will be disabled with a warning.
-
-### Integrating with Your Application
-
-With the latest enhancements, integrating this double-entry accounting system with your LND-based application is now simpler:
-
-1. **Create Accounts**: Create accounts for users or purposes
-2. **Create Invoices**: Generate invoices directly tied to specific accounts
-3. **Register Webhooks**: Set up webhooks to receive notifications when payments are made
-4. **Send Payments**: Send payments from accounts with automatic balance validation
-
-Example integration using the direct API:
-
-```javascript
-// Create an invoice for an account
-const invoiceResponse = await fetch('http://localhost:3000/api/invoices/incoming', {
-  method: 'POST',
-  headers: { 
-    'Content-Type': 'application/json',
-    'X-API-Key': 'your-api-key' 
-  },
-  body: JSON.stringify({
-    accountId: '3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d',
-    amount: '1000',
-    memo: 'Payment for services'
-  })
-});
-
-const { data } = await invoiceResponse.json();
-const paymentRequest = data.invoice.payment_request;
-
-// Send this payment request to the user for payment
-// When payment is received, the system will automatically:
-// 1. Detect the payment via LND polling
-// 2. Update the transaction status in the database
-// 3. Send a webhook notification to your application
-```
-
-### Register a webhook to receive notifications
-
-```javascript
-const webhookResponse = await fetch('http://localhost:3000/api/webhooks', {
-  method: 'POST',
-  headers: { 
-    'Content-Type': 'application/json',
-    'X-API-Key': 'your-api-key' 
-  },
-  body: JSON.stringify({
-    accountId: '3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d',
-    url: 'https://your-app.com/webhooks/lightning',
-    secret: 'your-webhook-secret'
-  })
-});
-
-// Your application will now receive webhook notifications at the specified URL
-// when invoices are created or paid for this account
-```
-
-### Testing LND Connectivity
-
-To verify your connection to the LND node is working:
-
-```bash
-curl http://localhost:3000/api/lnd/info
-```
-
-This will return information about your node if the connection is successful, or an error if there are issues with the connection.
 
 ## License
 
