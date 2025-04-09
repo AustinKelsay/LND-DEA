@@ -27,13 +27,22 @@ export class InvoiceController {
    * Process an incoming invoice
    */
   processIncomingInvoice = asyncHandler(async (req: Request, res: Response) => {
-    const { paymentRequest, userId } = req.body as { paymentRequest: string; userId?: string };
+    const { paymentRequest, accountId, amount, memo } = req.body as { 
+      paymentRequest?: string;
+      accountId: string;
+      amount: string;
+      memo?: string;
+    };
     
-    if (!paymentRequest) {
-      throw new ValidationError('Payment request is required', { paymentRequest: 'Payment request is required' });
+    if (!accountId) {
+      throw new ValidationError('Account ID is required', { accountId: 'Account ID is required' });
     }
 
-    const invoice = await lndServiceInstance.processIncomingInvoice(paymentRequest, userId);
+    if (!amount) {
+      throw new ValidationError('Amount is required', { amount: 'Amount is required' });
+    }
+
+    const invoice = await lndServiceInstance.createInvoiceForAccount(accountId, amount, memo || '');
     res.status(201).json({ success: true, data: invoice });
   });
 
@@ -41,28 +50,35 @@ export class InvoiceController {
    * Process an outgoing payment
    */
   processOutgoingPayment = asyncHandler(async (req: Request, res: Response) => {
-    const { paymentRequest, userId } = req.body as { paymentRequest: string; userId?: string };
+    const { paymentRequest, accountId } = req.body as { 
+      paymentRequest: string; 
+      accountId: string;
+    };
     
     if (!paymentRequest) {
       throw new ValidationError('Payment request is required', { paymentRequest: 'Payment request is required' });
     }
 
-    const invoice = await lndServiceInstance.processOutgoingPayment(paymentRequest, userId);
-    res.status(201).json({ success: true, data: invoice });
+    if (!accountId) {
+      throw new ValidationError('Account ID is required', { accountId: 'Account ID is required' });
+    }
+
+    const payment = await lndServiceInstance.sendPaymentFromAccount(accountId, paymentRequest);
+    res.status(201).json({ success: true, data: payment });
   });
 
   /**
-   * Settle an invoice
+   * Check invoice status
    */
-  settleInvoice = asyncHandler(async (req: Request, res: Response) => {
+  checkInvoiceStatus = asyncHandler(async (req: Request, res: Response) => {
     const { rHash } = req.params as { rHash: string };
     
     if (!rHash) {
       throw new ValidationError('Payment hash is required', { rHash: 'Payment hash is required' });
     }
 
-    const invoice = await lndServiceInstance.settleInvoice(rHash);
-    res.json({ success: true, data: invoice });
+    const status = await lndServiceInstance.checkInvoiceStatus(rHash);
+    res.json({ success: true, data: status });
   });
 
   /**

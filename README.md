@@ -17,6 +17,7 @@ This project deliberately keeps a minimal footprint:
 - It doesn't duplicate all data from your LND node
 - It implements proper double-entry accounting for LND transactions
 - It provides a simple API to query transactions by account
+- It abstracts all LND interactions for applications using the system
 
 ## Technical Features
 
@@ -28,6 +29,9 @@ This project deliberately keeps a minimal footprint:
 - **Docker Ready**: Easy deployment with Docker Compose
 - **Comprehensive Logging**: Structured logging for easy debugging and monitoring
 - **LND Connectivity Testing**: Endpoint to verify LND node connection status
+- **Webhook Notifications**: Support for registering webhook endpoints to receive real-time payment notifications
+- **Invoice Subscription**: Built-in polling system to monitor invoice status changes
+- **Account-Specific Operations**: Create invoices and send payments directly from specific accounts
 
 ## Type System
 
@@ -283,7 +287,7 @@ This helps filter out expected errors (like validation errors) while still captu
 
 ## Database Schema
 
-The system uses a focused PostgreSQL database with only two tables:
+The system uses a focused PostgreSQL database with the following tables:
 
 ### Account
 ```
@@ -303,6 +307,17 @@ The system uses a focused PostgreSQL database with only two tables:
 - type (enum: 'INCOMING'|'OUTGOING')
 - status (enum: 'PENDING'|'COMPLETE'|'FAILED')
 - memo (string, optional)
+- createdAt (timestamp)
+- updatedAt (timestamp)
+```
+
+### Webhook
+```
+- id (uuid)
+- accountId (foreign key to Account)
+- url (string) - endpoint to receive webhook notifications
+- secret (string) - secret for signing webhook payloads
+- enabled (boolean) - whether the webhook is active
 - createdAt (timestamp)
 - updatedAt (timestamp)
 ```
@@ -328,6 +343,26 @@ The system uses a focused PostgreSQL database with only two tables:
 | GET | `/api/transactions` | Get all transactions |
 | GET | `/api/transactions/:rHash` | Get transaction by rHash |
 | PUT | `/api/transactions/:rHash/status` | Update transaction status |
+
+### Invoices
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/invoices/incoming` | Create a new invoice for an account |
+| POST | `/api/invoices/outgoing` | Send a payment from an account |
+| GET | `/api/invoices/status/:rHash` | Check invoice status |
+| GET | `/api/invoices/:rHash` | Get invoice by payment hash |
+| GET | `/api/invoices/user/:userIdentifier` | Get invoices by user identifier |
+
+### Webhooks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/webhooks` | Register a new webhook |
+| GET | `/api/webhooks` | Get all webhooks |
+| GET | `/api/webhooks/:id` | Get webhook by ID |
+| PUT | `/api/webhooks/:id` | Update webhook |
+| DELETE | `/api/webhooks/:id` | Delete webhook |
 
 ### LND Info
 
@@ -386,15 +421,12 @@ Response:
 }
 ```
 
-### Associate a transaction with an account
+### Create an invoice for an account
 ```
-POST /api/transactions
+POST /api/invoices/incoming
 {
   "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
-  "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
   "amount": "1000",
-  "type": "INCOMING",
-  "status": "COMPLETE",
   "memo": "Payment for services"
 }
 ```
@@ -404,15 +436,103 @@ Response:
 {
   "success": true,
   "data": {
-    "id": "9c8b7a6f-5e4d-3c2b-1a0f-9e8d7c6b5a4e",
+    "invoice": {
+      "r_hash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+      "payment_request": "lnbc10u1p3hkng4pp5fpffsrgxp7tpfxhezfvxgvjsd74zj6jn8wm6l39ycnm5crr4mqsdqqcqzpgxqyz5vqsp5hsfy5n97pswkx3uqp5zr5hgqkc4hz7g97anw0hvg8z4rkzcvwuks9qyyssq5g2ff40lf3fnk0k2hxp0cw9xk4ksyauhal3hjvf9n4r898vg4q4d02hlq2js7tpvwpvstmkw22du7y7u6xutkm8fay96cpf4gd0sqea5h49",
+      "value": "1000",
+      "memo": "Payment for services userid:user123",
+      // Additional invoice fields...
+    },
+    "transaction": {
+      "id": "9c8b7a6f-5e4d-3c2b-1a0f-9e8d7c6b5a4e",
+      "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+      "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+      "amount": "1000",
+      "type": "INCOMING",
+      "status": "PENDING",
+      "memo": "Payment for services userid:user123",
+      "createdAt": "2023-06-25T12:35:56.789Z",
+      "updatedAt": "2023-06-25T12:35:56.789Z"
+    }
+  }
+}
+```
+
+### Send a payment from an account
+```
+POST /api/invoices/outgoing
+{
+  "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+  "paymentRequest": "lnbc10u1p3hkng4pp5fpffsrgxp7tpfxhezfvxgvjsd74zj6jn8wm6l39ycnm5crr4mqsdqqcqzpgxqyz5vqsp5hsfy5n97pswkx3uqp5zr5hgqkc4hz7g97anw0hvg8z4rkzcvwuks9qyyssq5g2ff40lf3fnk0k2hxp0cw9xk4ksyauhal3hjvf9n4r898vg4q4d02hlq2js7tpvwpvstmkw22du7y7u6xutkm8fay96cpf4gd0sqea5h49"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "payment": {
+      "payment_hash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+      "payment_preimage": "f0b3f037a2d4a9d0c1d2e3f4a5b6c7d8e9a1b2c3d4e5f6a7b8c9d0e1f2a3b4",
+      "value_sat": "1000",
+      "value_msat": "1000000",
+      "status": "SUCCEEDED"
+      // Additional payment fields...
+    },
+    "transaction": {
+      "id": "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6",
+      "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+      "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+      "amount": "1000",
+      "type": "OUTGOING",
+      "status": "COMPLETE",
+      "memo": "Purchase from merchant",
+      "createdAt": "2023-06-25T12:36:56.789Z",
+      "updatedAt": "2023-06-25T12:36:56.789Z"
+    }
+  }
+}
+```
+
+### Check invoice status
+```
+GET /api/invoices/status/d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "settled": true,
+    "status": "COMPLETE"
+  }
+}
+```
+
+### Register a webhook
+```
+POST /api/webhooks
+{
+  "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+  "url": "https://example.com/webhooks/lightning",
+  "secret": "your-webhook-secret"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "b7c8d9e0-f1a2-3b4c-5d6e-7f8a9b0c1d2e",
     "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
-    "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
-    "amount": "1000",
-    "type": "INCOMING",
-    "status": "COMPLETE",
-    "memo": "Payment for services",
-    "createdAt": "2023-06-25T12:35:56.789Z",
-    "updatedAt": "2023-06-25T12:35:56.789Z"
+    "url": "https://example.com/webhooks/lightning",
+    "secret": "your-webhook-secret",
+    "enabled": true,
+    "createdAt": "2023-06-25T12:37:56.789Z",
+    "updatedAt": "2023-06-25T12:37:56.789Z"
   }
 }
 ```
@@ -454,6 +574,60 @@ Response:
     "chains": [{"chain": "bitcoin", "network": "signet"}],
     "features": {...}
   }
+}
+```
+
+## Webhook Notifications
+
+The system supports webhook notifications for various events related to lightning transactions. When a registered event occurs, the system will send an HTTP POST request to the configured webhook URL with a JSON payload.
+
+### Webhook Events
+
+The following events trigger webhook notifications:
+
+- `invoice.created`: When a new invoice is created for an account
+- `invoice.updated`: When an invoice status changes (settled or failed)
+- `payment.completed`: When an outgoing payment is completed successfully
+- `payment.failed`: When an outgoing payment fails
+
+### Webhook Payload
+
+The webhook payload follows this structure:
+
+```json
+{
+  "event": "invoice.updated",
+  "data": {
+    "rHash": "d45e23cbd4edcabc12c29eb5c3b9c2e1a4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+    "accountId": "3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d",
+    "amount": "1000",
+    "status": "COMPLETE",
+    "type": "INCOMING"
+  },
+  "timestamp": "2023-06-25T12:38:56.789Z"
+}
+```
+
+### Webhook Security
+
+Each webhook request includes a signature in the `X-Webhook-Signature` header. This signature is an HMAC-SHA256 hash of the request payload, using the webhook secret as the key.
+
+To verify the webhook payload:
+1. Take the received payload exactly as-is
+2. Create an HMAC-SHA256 hash using your webhook secret
+3. Compare the generated hash with the value in the `X-Webhook-Signature` header
+
+```javascript
+const crypto = require('crypto');
+
+function verifyWebhookSignature(payload, signature, secret) {
+  const hmac = crypto.createHmac('sha256', secret);
+  hmac.update(JSON.stringify(payload));
+  const expectedSignature = hmac.digest('hex');
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expectedSignature)
+  );
 }
 ```
 
@@ -504,39 +678,6 @@ PORT=3000
 NODE_ENV=development
 ```
 
-## Installation for Development
-
-### Prerequisites
-- Node.js 18 or newer
-- PostgreSQL database
-- Access to an LND node with REST API enabled
-
-### Setup
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/lnd-double-entry-accounting.git
-cd lnd-double-entry-accounting
-
-# Install dependencies
-npm install
-
-# Create .env file
-cp .env.sample .env
-# Edit .env file with your configuration
-
-# Generate Prisma client
-npm run generate
-
-# Run Prisma migrations
-npm run migrate:dev
-
-# Build TypeScript
-npm run build
-
-# Start the server
-npm start
-```
-
 ## Implementation & Integration
 
 ### Authentication
@@ -554,37 +695,58 @@ If no API_KEY is set in the environment, authentication will be disabled with a 
 
 ### Integrating with Your Application
 
-To integrate this double-entry accounting system with your LND-based application:
+With the latest enhancements, integrating this double-entry accounting system with your LND-based application is now simpler:
 
-1. **Listen for LND Payments**: Use LND's gRPC or REST API to subscribe to payment events
-2. **Determine Account Ownership**: Use your application logic to determine which account a payment belongs to
-3. **Record the Transaction**: Call this API to record the transaction in the correct account
+1. **Create Accounts**: Create accounts for users or purposes
+2. **Create Invoices**: Generate invoices directly tied to specific accounts
+3. **Register Webhooks**: Set up webhooks to receive notifications when payments are made
+4. **Send Payments**: Send payments from accounts with automatic balance validation
 
-Example integration pseudocode:
+Example integration using the direct API:
+
 ```javascript
-// When an invoice is paid in LND
-lnd.subscribeInvoices().on('invoice_paid', async (invoice) => {
-  // Determine which account this payment belongs to
-  // e.g., from custom fields in the invoice memo
-  const accountId = determineAccountFromInvoice(invoice);
-  
-  // Record the transaction in our double-entry accounting system
-  await fetch('http://localhost:3000/api/transactions', {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json',
-      'X-API-Key': 'your-api-key' 
-    },
-    body: JSON.stringify({
-      accountId,
-      rHash: invoice.r_hash.toString('hex'),
-      amount: invoice.value.toString(),
-      type: 'INCOMING',
-      status: 'COMPLETE',
-      memo: invoice.memo
-    })
-  });
+// Create an invoice for an account
+const invoiceResponse = await fetch('http://localhost:3000/api/invoices/incoming', {
+  method: 'POST',
+  headers: { 
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key' 
+  },
+  body: JSON.stringify({
+    accountId: '3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d',
+    amount: '1000',
+    memo: 'Payment for services'
+  })
 });
+
+const { data } = await invoiceResponse.json();
+const paymentRequest = data.invoice.payment_request;
+
+// Send this payment request to the user for payment
+// When payment is received, the system will automatically:
+// 1. Detect the payment via LND polling
+// 2. Update the transaction status in the database
+// 3. Send a webhook notification to your application
+```
+
+### Register a webhook to receive notifications
+
+```javascript
+const webhookResponse = await fetch('http://localhost:3000/api/webhooks', {
+  method: 'POST',
+  headers: { 
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key' 
+  },
+  body: JSON.stringify({
+    accountId: '3a7c1e9b-3b2a-4e3f-9c4d-5e6f7a8b9c0d',
+    url: 'https://your-app.com/webhooks/lightning',
+    secret: 'your-webhook-secret'
+  })
+});
+
+// Your application will now receive webhook notifications at the specified URL
+// when invoices are created or paid for this account
 ```
 
 ### Testing LND Connectivity

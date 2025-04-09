@@ -49,4 +49,23 @@ export interface ParsedInvoice {
   expiry: number;
   timestamp: number;
   rawData: string;
+}
+
+// Interface for creating a webhook
+export interface WebhookInput {
+  accountId: string;
+  url: string;
+  secret: string;
+  enabled?: boolean;
+}
+
+// Interface for webhook summary
+export interface WebhookSummary {
+  id: string;
+  accountId: string;
+  url: string;
+  secret: string;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 } 

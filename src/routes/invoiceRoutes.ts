@@ -10,8 +10,8 @@ router.post('/incoming', invoiceController.processIncomingInvoice);
 // Process an outgoing payment
 router.post('/outgoing', invoiceController.processOutgoingPayment);
 
-// Settle an invoice
-router.post('/settle/:rHash', invoiceController.settleInvoice);
+// Check invoice status
+router.get('/status/:rHash', invoiceController.checkInvoiceStatus);
 
 // Get an invoice by payment hash
 router.get('/:rHash', invoiceController.getInvoiceByRHash);

@@ -3,7 +3,9 @@ import {
   CreateAccountInput,
   CreateLightningTransactionInput,
   AccountSummary,
-  TransactionSummary
+  TransactionSummary,
+  WebhookInput,
+  WebhookSummary
 } from '../models/interfaces';
 import { DatabaseError, NotFoundError, handleDatabaseError } from '../utils/errors';
 import { logger } from '../utils/logger';
@@ -381,5 +383,147 @@ export class DbService {
       totalBalance: '0',
       accounts: []
     };
+  }
+
+  /**
+   * Creates a webhook for an account
+   */
+  async createWebhook(input: WebhookInput): Promise<WebhookSummary> {
+    try {
+      // Check if account exists
+      const account = await this.prisma.account.findUnique({
+        where: { id: input.accountId }
+      });
+      
+      if (!account) {
+        throw new NotFoundError(`Account with ID ${input.accountId} not found`);
+      }
+      
+      const webhook = await this.prisma.webhook.create({
+        data: {
+          accountId: input.accountId,
+          url: input.url,
+          secret: input.secret,
+          enabled: input.enabled ?? true
+        }
+      });
+      
+      return {
+        id: webhook.id,
+        accountId: webhook.accountId,
+        url: webhook.url,
+        secret: webhook.secret,
+        enabled: webhook.enabled,
+        createdAt: webhook.createdAt,
+        updatedAt: webhook.updatedAt
+      };
+    } catch (error) {
+      throw handleDatabaseError(error);
+    }
+  }
+  
+  /**
+   * Gets all webhooks for an account
+   */
+  async getWebhooksByAccountId(accountId: string): Promise<WebhookSummary[]> {
+    try {
+      const webhooks = await this.prisma.webhook.findMany({
+        where: { accountId }
+      });
+      
+      return webhooks.map((webhook: any) => ({
+        id: webhook.id,
+        accountId: webhook.accountId,
+        url: webhook.url,
+        secret: webhook.secret,
+        enabled: webhook.enabled,
+        createdAt: webhook.createdAt,
+        updatedAt: webhook.updatedAt
+      }));
+    } catch (error) {
+      throw handleDatabaseError(error);
+    }
+  }
+  
+  /**
+   * Gets a webhook by ID
+   */
+  async getWebhookById(id: string): Promise<WebhookSummary | null> {
+    try {
+      const webhook = await this.prisma.webhook.findUnique({
+        where: { id }
+      });
+      
+      if (!webhook) {
+        return null;
+      }
+      
+      return {
+        id: webhook.id,
+        accountId: webhook.accountId,
+        url: webhook.url,
+        secret: webhook.secret,
+        enabled: webhook.enabled,
+        createdAt: webhook.createdAt,
+        updatedAt: webhook.updatedAt
+      };
+    } catch (error) {
+      throw handleDatabaseError(error);
+    }
+  }
+  
+  /**
+   * Updates a webhook
+   */
+  async updateWebhook(id: string, data: Partial<WebhookInput>): Promise<WebhookSummary> {
+    try {
+      const webhook = await this.prisma.webhook.findUnique({
+        where: { id }
+      });
+      
+      if (!webhook) {
+        throw new NotFoundError(`Webhook with ID ${id} not found`);
+      }
+      
+      const updatedWebhook = await this.prisma.webhook.update({
+        where: { id },
+        data
+      });
+      
+      return {
+        id: updatedWebhook.id,
+        accountId: updatedWebhook.accountId,
+        url: updatedWebhook.url,
+        secret: updatedWebhook.secret,
+        enabled: updatedWebhook.enabled,
+        createdAt: updatedWebhook.createdAt,
+        updatedAt: updatedWebhook.updatedAt
+      };
+    } catch (error) {
+      throw handleDatabaseError(error);
+    }
+  }
+  
+  /**
+   * Deletes a webhook
+   */
+  async deleteWebhook(id: string): Promise<boolean> {
+    try {
+      const webhook = await this.prisma.webhook.findUnique({
+        where: { id }
+      });
+      
+      if (!webhook) {
+        return false;
+      }
+      
+      await this.prisma.webhook.delete({
+        where: { id }
+      });
+      
+      return true;
+    } catch (error) {
+      throw handleDatabaseError(error);
+    }
   }
 } 
