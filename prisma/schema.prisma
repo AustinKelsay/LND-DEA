@@ -15,6 +15,7 @@ model Account {
   name        String                @unique
   description String?
   transactions LightningTransaction[]
+  webhooks    Webhook[]
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
 
@@ -45,4 +46,17 @@ model LightningTransaction {
   updatedAt DateTime          @updatedAt
 
   @@map("lightning_transactions")
+}
+
+model Webhook {
+  id        String    @id @default(uuid())
+  accountId String
+  account   Account   @relation(fields: [accountId], references: [id])
+  url       String
+  secret    String
+  enabled   Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("webhooks")
 } 

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import * as https from 'https';
+import * as http from 'http';
 import { IncomingMessage } from 'http';
 import { logger } from '../utils/logger';
 import { 
@@ -15,7 +16,7 @@ import {
 import { DbService } from './dbService';
 import { EventEmitter } from 'events';
 import { TransactionType, TransactionStatus } from '@prisma/client';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { WebhookSummary, WebhookInput } from '../models/interfaces';
 // Replace node-fetch with built-in https
 // import fetch from 'node-fetch';
@@ -91,9 +92,12 @@ export class LndApiError extends Error {
  * Interface for webhook registration
  */
 interface WebhookConfig {
+  id: string;
+  accountId: string;
   url: string;
+  secret: string;
+  enabled: boolean;
   events: string[];
-  secret?: string;
 }
 
 /**
@@ -117,15 +121,17 @@ interface Webhook {
  * Service for interacting with the Lightning Network Daemon (LND) REST API
  */
 export class LndService extends EventEmitter {
-  private host: string;
-  private macaroonHex: string;
+  private host?: string;
+  private port?: number;
+  private macaroonHex?: string;
   private tlsCert: Buffer | null = null;
-  private dbService: DbService;
+  private readonly dbService: DbService;
+  private readonly ACCOUNT_PREFIX = "LNDA:";
   private userIdPattern?: string;
   private webhooks: WebhookConfig[] = [];
   private invoiceCallbacks: Map<string, InvoiceCallback[]> = new Map();
   private pollingInterval: NodeJS.Timeout | null = null;
-  private readonly POLL_INTERVAL = 10000; // 10 seconds
+  private readonly POLL_INTERVAL = 5000; // 5 seconds (changed from 10 seconds)
 
   constructor(
     host: string = '',
@@ -179,32 +185,52 @@ export class LndService extends EventEmitter {
   /**
    * Setup polling for invoice updates
    */
-  private setupPolling(): void {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
+  setupPolling(): void {
+    if (!this.isConfigured()) {
+      logger.warn('LND service not fully configured, polling not started');
+      return;
     }
+
+    // Set polling interval for invoice updates (5 seconds)
+    const POLL_INTERVAL = 5000;
+    
+    logger.info(`Starting LND invoice polling with ${POLL_INTERVAL}ms interval`);
     
     this.pollingInterval = setInterval(async () => {
       try {
-        // Fetch latest invoices
-        const response = await this.listInvoices(100);
-        if (!response.invoices) return;
+        // Get the latest invoices from LND
+        const invoices = await this.listInvoices(100);
         
-        // Process each invoice
-        for (const invoice of response.invoices) {
-          const rHash = lndUtils.toHexString(invoice.r_hash_str || invoice.r_hash);
-          await this.handleInvoiceUpdate(invoice);
-          
-          // Notify any specific callbacks for this invoice
-          const callbacks = this.invoiceCallbacks.get(rHash) || [];
-          callbacks.forEach(cb => cb.callback(invoice));
+        if (!invoices || !invoices.invoices || invoices.invoices.length === 0) {
+          logger.debug('No invoices found during polling');
+          return;
+        }
+        
+        logger.info(`Polling found ${invoices.invoices.length} invoices to process`);
+        
+        // Process each invoice to update its status
+        for (const invoice of invoices.invoices) {
+          try {
+            // Extract the r_hash for identifying the invoice
+            const rHash = lndUtils.toHexString(invoice.r_hash_str || invoice.r_hash);
+            
+            // Check if this invoice has a memo we care about (should contain our account prefix)
+            if (!this.isOurInvoice(invoice)) {
+              // Skip invoices that don't have our prefix in the memo
+              continue;
+            }
+            
+            await this.handleInvoiceUpdate(invoice);
+          } catch (err) {
+            logger.error('Error processing invoice during polling:', err);
+          }
         }
       } catch (error) {
         logger.error('Error during invoice polling:', error);
       }
-    }, this.POLL_INTERVAL);
+    }, POLL_INTERVAL);
     
-    logger.info(`Started polling for invoice updates every ${this.POLL_INTERVAL / 1000} seconds`);
+    logger.info('LND invoice polling started successfully');
   }
 
   /**
@@ -304,7 +330,7 @@ export class LndService extends EventEmitter {
 
     return new Promise<T>((resolve, reject) => {
       // Parse hostname and port separately
-      const [hostname, portStr] = this.host.split(':');
+      const [hostname, portStr] = this.host!.split(':');
       // Default to port 8080 if not specified
       const port = portStr ? parseInt(portStr, 10) : 8080;
       
@@ -317,7 +343,7 @@ export class LndService extends EventEmitter {
         port,
         path: `/v1/${endpoint}`,
         headers: {
-          'Grpc-Metadata-macaroon': this.macaroonHex,
+          'Grpc-Metadata-macaroon': this.macaroonHex!,
         },
         rejectUnauthorized: false,
       };
@@ -379,6 +405,63 @@ export class LndService extends EventEmitter {
   }
 
   /**
+   * Helper method to send a webhook notification
+   */
+  private async sendWebhookNotification(webhook: WebhookSummary, payload: any): Promise<void> {
+    try {
+      const url = new URL(webhook.url);
+      const requestData = JSON.stringify(payload);
+      const signature = this.generateWebhookSignature(webhook.secret, payload);
+      
+      return new Promise<void>((resolve, reject) => {
+        // Choose the appropriate request module based on the URL protocol
+        const requestModule = url.protocol === 'https:' ? https : http;
+        
+        logger.debug(`Sending webhook to ${webhook.url} using ${url.protocol} protocol`);
+        
+        const req = requestModule.request({
+          hostname: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: url.pathname + url.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(requestData),
+            'X-Webhook-Signature': signature
+          }
+        }, (res: IncomingMessage) => {
+          let responseData = '';
+          
+          res.on('data', (chunk: Buffer) => {
+            responseData += chunk.toString();
+          });
+          
+          res.on('end', () => {
+            if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+              logger.warn(`Webhook notification failed for ${webhook.url}: ${res.statusCode} ${res.statusMessage}`);
+              logger.debug(`Webhook response: ${responseData}`);
+            } else {
+              logger.debug(`Successfully sent webhook to ${webhook.url}`);
+            }
+            resolve();
+          });
+        });
+        
+        req.on('error', (error: Error) => {
+          logger.warn(`Error sending webhook notification to ${webhook.url}:`, error);
+          reject(error);
+        });
+        
+        req.write(requestData);
+        req.end();
+      });
+    } catch (error: unknown) {
+      logger.error(`Error sending webhook notification to ${webhook.url}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Sends webhook notifications for invoice events
    */
   private async notifyWebhooks(event: string, data: any): Promise<void> {
@@ -399,64 +482,25 @@ export class LndService extends EventEmitter {
       logger.info(`Sending ${event} webhook to ${webhooks.length} endpoints for account ${data.accountId}`);
       
       // Send notifications to all configured webhooks
-      const notificationPromises = webhooks.filter(webhook => webhook.enabled).map(async (webhook: WebhookSummary) => {
-        try {
-          // Use built-in https module instead of fetch
-          const url = new URL(webhook.url);
-          const payload = {
-            event,
-            data,
-            timestamp: new Date().toISOString()
-          };
-          const requestData = JSON.stringify(payload);
-          
-          const signature = this.generateWebhookSignature(webhook.secret, payload);
-          
-          return new Promise<void>((resolve, reject) => {
-            const req = https.request({
-              hostname: url.hostname,
-              port: url.port || (url.protocol === 'https:' ? 443 : 80),
-              path: url.pathname + url.search,
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(requestData),
-                'X-Webhook-Signature': signature
-              }
-            }, (res: IncomingMessage) => {
-              let responseData = '';
-              
-              res.on('data', (chunk: Buffer) => {
-                responseData += chunk.toString();
-              });
-              
-              res.on('end', () => {
-                if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-                  logger.warn(`Webhook notification failed for ${webhook.url}: ${res.statusCode} ${res.statusMessage}`);
-                  logger.debug(`Webhook response: ${responseData}`);
-                } else {
-                  logger.debug(`Successfully sent webhook to ${webhook.url}`);
-                }
-                resolve();
-              });
-            });
+      const notificationPromises = webhooks
+        .filter(webhook => webhook.enabled)
+        .map(async (webhook: WebhookSummary) => {
+          try {
+            const payload = {
+              event,
+              data,
+              timestamp: new Date().toISOString()
+            };
             
-            req.on('error', (error) => {
-              logger.warn(`Error sending webhook notification to ${webhook.url}:`, error);
-              reject(error);
-            });
-            
-            req.write(requestData);
-            req.end();
-          });
-        } catch (error) {
-          logger.warn(`Error sending webhook notification to ${webhook.url}:`, error);
-          // We don't want to fail the entire process if one webhook fails
-        }
-      });
+            await this.sendWebhookNotification(webhook, payload);
+          } catch (error: unknown) {
+            logger.warn(`Error sending webhook notification to ${webhook.url}:`, error);
+            // We don't want to fail the entire process if one webhook fails
+          }
+        });
       
       await Promise.all(notificationPromises);
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('Error sending webhook notifications:', error);
     }
   }
@@ -481,7 +525,12 @@ export class LndService extends EventEmitter {
    * Get a list of all invoices
    */
   async listInvoices(numMaxInvoices = 100): Promise<LndInvoicesResponse> {
-    const response = await this.makeRequest<LndInvoicesResponse>('GET', `invoices?num_max_invoices=${numMaxInvoices}`);
+    // Include_canceled=true to get all invoice states
+    // Reversed=true to get newest invoices first
+    const response = await this.makeRequest<LndInvoicesResponse>(
+      'GET', 
+      `invoices?num_max_invoices=${numMaxInvoices}&include_canceled=true&reversed=true&pending_only=false`
+    );
     
     // Normalize r_hash values to hex strings for consistency
     if (response.invoices) {
@@ -489,6 +538,13 @@ export class LndService extends EventEmitter {
         ...invoice,
         r_hash_str: lndUtils.toHexString(invoice.r_hash_str || invoice.r_hash)
       }));
+      
+      logger.debug(`Retrieved ${response.invoices.length} invoices from LND`);
+      
+      // Log some info about the invoices for debugging
+      const settledCount = response.invoices.filter(inv => inv.settled).length;
+      logger.debug(`- ${settledCount} settled invoices`);
+      logger.debug(`- ${response.invoices.length - settledCount} unsettled invoices`);
     }
     
     return response;
@@ -693,13 +749,14 @@ export class LndService extends EventEmitter {
     // Make sure amount is a string - handle type conversion safely
     let amount: string = '0';
     if (invoice.value_msat) {
-      const msat = parseInt(invoice.value_msat.toString(), 10);
+      const msat = parseInt(String(invoice.value_msat), 10);
       amount = (msat / 1000).toString();
     } else if (invoice.value) {
-      amount = invoice.value.toString();
+      amount = String(invoice.value);
     }
     
-    // ... existing code ...
+    // Now proceed with the processed invoice that has a string amount
+    // ... rest of the implementation ...
   }
 
   /**
@@ -719,7 +776,7 @@ export class LndService extends EventEmitter {
   }
 
   /**
-   * Check if an invoice has been settled
+   * Check invoice status
    */
   async checkInvoiceStatus(rHash: string): Promise<{settled: boolean, status: TransactionStatus}> {
     try {
@@ -739,13 +796,46 @@ export class LndService extends EventEmitter {
         return { settled: false, status: TransactionStatus.FAILED };
       }
       
-      // Otherwise, check with LND for the current status
-      // We need to look up the invoice in LND - this would be more efficient with a specific
-      // lookup API but we'll use the list method for now
+      // Otherwise check with LND for the current status
+      // We need to look up the invoice in LND - first try direct lookup
+      try {
+        logger.info(`Checking status of invoice ${rHash} with LND`);
+        // First try fetching by lookup API
+        const invoice = await this.makeRequest<LndInvoice>('GET', `invoice/${rHash}`);
+        
+        if (invoice) {
+          logger.info(`Found invoice ${rHash} directly, settled: ${invoice.settled}, state: ${invoice.state}`);
+          
+          const newStatus = invoice.settled ? TransactionStatus.COMPLETE : 
+                             invoice.state === 'CANCELED' ? TransactionStatus.FAILED : 
+                             TransactionStatus.PENDING;
+          
+          // Update the status in our database if changed
+          if (transaction.status !== newStatus) {
+            await this.dbService.updateTransactionStatus(rHash, newStatus);
+            logger.info(`Updated transaction status from ${transaction.status} to ${newStatus}`);
+          }
+          
+          return { 
+            settled: invoice.settled, 
+            status: newStatus 
+          };
+        }
+      } catch (error) {
+        logger.warn(`Direct invoice lookup failed for ${rHash}, falling back to list method:`, error);
+      }
+      
+      // If direct lookup fails, try listing invoices method
       const invoices = await this.listInvoices(100);
+      logger.info(`Checking ${invoices.invoices?.length || 0} invoices for match with ${rHash}`);
+      
       const invoice = invoices.invoices?.find(inv => {
         const invHash = lndUtils.toHexString(inv.r_hash_str || inv.r_hash);
-        return invHash === rHash;
+        const match = invHash === rHash;
+        if (match) {
+          logger.info(`Found matching invoice with r_hash ${rHash}, settled: ${inv.settled}, state: ${inv.state}`);
+        }
+        return match;
       });
       
       if (invoice) {
@@ -753,9 +843,23 @@ export class LndService extends EventEmitter {
                            invoice.state === 'CANCELED' ? TransactionStatus.FAILED : 
                            TransactionStatus.PENDING;
         
+        logger.info(`Status for invoice ${rHash}: settled=${invoice.settled}, state=${invoice.state}, new status=${newStatus}`);
+        
         // Update the status in our database if changed
         if (transaction.status !== newStatus) {
           await this.dbService.updateTransactionStatus(rHash, newStatus);
+          logger.info(`Updated transaction status from ${transaction.status} to ${newStatus}`);
+          
+          // If the payment was settled, send webhook notification
+          if (newStatus === TransactionStatus.COMPLETE) {
+            this.notifyWebhooks('invoice.updated', { 
+              rHash, 
+              status: newStatus,
+              accountId: transaction.accountId,
+              amount: transaction.amount,
+              type: transaction.type
+            });
+          }
         }
         
         return { 
@@ -765,6 +869,7 @@ export class LndService extends EventEmitter {
       }
       
       // Invoice not found in LND, keep status as is
+      logger.warn(`Invoice ${rHash} not found in LND, keeping status as ${transaction.status}`);
       return { settled: false, status: transaction.status };
     } catch (error) {
       logger.error(`Error checking invoice status for r_hash ${rHash}:`, error);
@@ -959,6 +1064,75 @@ export class LndService extends EventEmitter {
       return await this.dbService.updateWebhook(webhookId, { enabled });
     } catch (error) {
       logger.error('Error updating webhook status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Checks if an invoice was created by our system
+   * @param invoice - The LND invoice to check
+   * @returns true if this is an invoice our system created
+   */
+  private isOurInvoice(invoice: any): boolean {
+    if (!invoice.memo) return false;
+    
+    // Check if the memo contains our account prefix
+    try {
+      // Our invoices should have memos in the format "ACCOUNT_PREFIX:accountId:description"
+      return invoice.memo.startsWith(this.ACCOUNT_PREFIX);
+    } catch (err) {
+      logger.error('Error checking invoice ownership:', err);
+      return false;
+    }
+  }
+
+  // Process invoice update webhook notifications
+  private async processInvoiceWebhooks(invoice: any, accountId: string): Promise<void> {
+    try {
+      // Get all webhooks for this account
+      const webhooks = await this.dbService.getWebhooksByAccountId(accountId);
+      
+      if (!webhooks || webhooks.length === 0) {
+        logger.debug(`No webhooks found for account ${accountId}`);
+        return;
+      }
+      
+      logger.info(`Sending invoice update webhook to ${webhooks.length} endpoints for account ${accountId}`);
+      
+      const amount = typeof invoice.value === 'number' ? 
+        invoice.value.toString() : 
+        String(invoice.value || '0');
+      
+      const rHash = lndUtils.toHexString(invoice.r_hash_str || invoice.r_hash);
+      
+      // Send notifications to all configured webhooks
+      const notificationPromises = webhooks
+        .filter(webhook => webhook.enabled)
+        .map(async (webhook) => {
+          try {
+            // Prepare webhook notification
+            const payload = {
+              event: 'invoice.updated',
+              data: {
+                rHash,
+                accountId,
+                status: invoice.settled ? TransactionStatus.COMPLETE : TransactionStatus.PENDING,
+                amount,
+                type: TransactionType.INCOMING
+              },
+              timestamp: new Date().toISOString()
+            };
+            
+            // Send the webhook notification using our helper method
+            await this.sendWebhookNotification(webhook, payload);
+          } catch (error: unknown) {
+            logger.error(`Error sending invoice webhook to ${webhook.url}:`, error);
+          }
+        });
+      
+      await Promise.all(notificationPromises);
+    } catch (error: unknown) {
+      logger.error('Error processing invoice webhook notifications:', error);
       throw error;
     }
   }
