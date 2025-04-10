@@ -76,11 +76,12 @@ These types ensure we correctly extract data from Bolt11 invoices.
 The `src/models/interfaces.ts` file contains interfaces used throughout the application:
 
 - `ParsedInvoice`: Our application's standardized invoice structure
-- `CreateUserInput`: Input for creating users
 - `CreateAccountInput`: Input for creating accounts
 - `CreateTransactionInput`: Input for creating transactions
-- `UserAccountSummary`: Output for account summaries
+- `AccountSummary`: Output for account summaries
 - `TransactionSummary`: Output for transaction summaries
+- `WebhookInput`: Input for creating webhooks
+- `WebhookSummary`: Output for webhook summaries
 
 #### Node.js Environment Types
 
@@ -129,9 +130,9 @@ const parsedInvoice: ParsedInvoice = parseInvoice(paymentRequest);
 #### Using Type-Safe Database Operations
 
 ```typescript
-// Create a user with type checking
-const user = await dbService.createUser({ 
-  username: "example" // TypeScript ensures this matches CreateUserInput
+// Create an account with type checking
+const account = await dbService.createAccount({ 
+  name: "example" // TypeScript ensures this matches CreateAccountInput
 });
 ```
 
@@ -240,16 +241,16 @@ This specialized error class captures:
 
 #### Throwing a validation error
 ```typescript
-if (!username) {
-  throw new ValidationError('Username is required', { username: 'Username is required' });
+if (!name) {
+  throw new ValidationError('Account name is required', { name: 'Account name is required' });
 }
 ```
 
 #### Throwing a not found error
 ```typescript
-const user = await dbService.getUserById(id);
-if (!user) {
-  throw new NotFoundError(`User with ID ${id} not found`);
+const account = await dbService.getAccount(id);
+if (!account) {
+  throw new NotFoundError(`Account with ID ${id} not found`);
 }
 ```
 
@@ -302,7 +303,7 @@ The system uses a focused PostgreSQL database with the following tables:
 ```
 - id (uuid)
 - accountId (foreign key to Account)
-- rHash (string) - payment hash from LND
+- rHash (string, unique) - payment hash from LND
 - amount (string) - satoshi amount as string to handle large values
 - type (enum: 'INCOMING'|'OUTGOING')
 - status (enum: 'PENDING'|'COMPLETE'|'FAILED')
@@ -369,6 +370,7 @@ The system uses a focused PostgreSQL database with the following tables:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/lnd/info` | Get LND node connection information |
+| GET | `/health` | Health check endpoint for the server, database, and LND connection |
 
 ### Pagination
 
@@ -711,9 +713,17 @@ LND-DEA uses a polling-based system to monitor invoice status changes rather tha
 3. Works reliably behind proxies and load balancers
 4. Automatically retries on connection issues
 
-The polling interval is configurable and defaults to 10 seconds. The system monitors all invoices and triggers appropriate webhooks when statuses change.
+The polling interval is configurable and defaults to 60 seconds. The system monitors all invoices and triggers appropriate webhooks when statuses change.
 
-Individual applications can also subscribe to specific invoice updates by using the appropriate API endpoints.
+### Automatic Account Assignment
+
+When the LndMonitorService detects a new invoice that's been paid, it attempts to determine which account it belongs to by:
+
+1. Looking for a user identifier in the memo based on the `USER_IDENTIFIER_PATTERN` environment variable
+2. Searching for any account name mentioned in the memo
+3. If no account can be determined, using a "default" account (which is automatically created if it doesn't exist)
+
+This automatic account assignment feature ensures that no incoming payments are lost, even if they can't be immediately assigned to a specific account.
 
 ### Integrating with Your Application
 

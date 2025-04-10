@@ -1,4 +1,4 @@
-import { PrismaClient, TransactionType, TransactionStatus } from '@prisma/client';
+import { PrismaClient, TransactionType, TransactionStatus, LightningTransaction } from '@prisma/client';
 import {
   CreateAccountInput,
   CreateLightningTransactionInput,
@@ -332,59 +332,41 @@ export class DbService {
    * Gets invoices by user identifier
    */
   async getInvoicesByUserIdentifier(userIdentifier: string) {
-    // This is a placeholder implementation
-    return [];
-  }
-  
-  /**
-   * Gets a user by username
-   */
-  async getUserByUsername(username: string) {
-    // This is a placeholder implementation
-    return null;
-  }
-  
-  /**
-   * Creates a user
-   */
-  async createUser(input: { username: string }) {
-    // This is a placeholder implementation
-    return {
-      id: 'placeholder-id',
-      username: input.username,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-  }
-  
-  /**
-   * Gets a user by ID
-   */
-  async getUserById(id: string) {
-    // This is a placeholder implementation
-    return null;
-  }
-  
-  /**
-   * Gets all users
-   */
-  async getAllUsers() {
-    // This is a placeholder implementation
-    return [];
-  }
-  
-  /**
-   * Gets user account summary
-   */
-  async getUserAccountSummary(id: string) {
-    // This is a placeholder implementation
-    return {
-      userId: id,
-      totalBalance: '0',
-      accounts: []
-    };
-  }
+    try {
+      const pattern = process.env.USER_IDENTIFIER_PATTERN;
+      if (!pattern) {
+        return [];
+      }
 
+      // Look for transactions with the user identifier in the memo
+      const transactions = await this.prisma.lightningTransaction.findMany({
+        where: {
+          memo: {
+            contains: `userid:${userIdentifier}`
+          }
+        },
+        orderBy: {
+          createdAt: 'desc'
+        }
+      });
+
+      return transactions.map((tx: LightningTransaction) => ({
+        id: tx.id,
+        accountId: tx.accountId,
+        rHash: tx.rHash,
+        amount: tx.amount,
+        type: tx.type,
+        status: tx.status,
+        memo: tx.memo,
+        createdAt: tx.createdAt,
+        updatedAt: tx.updatedAt
+      }));
+    } catch (error) {
+      logger.error('Error getting invoices by user identifier:', error);
+      return [];
+    }
+  }
+  
   /**
    * Creates a webhook for an account
    */
